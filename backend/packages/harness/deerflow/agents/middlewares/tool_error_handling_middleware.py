@@ -1,4 +1,5 @@
-"""Tool error handling middleware and shared runtime middleware builders."""
+"""工具错误处理中间件与共享的运行时中间件构造器。"""
+
 
 import logging
 from collections.abc import Awaitable, Callable
@@ -19,9 +20,10 @@ _MISSING_TOOL_CALL_ID = "missing_tool_call_id"
 
 
 class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
-    """Convert tool exceptions into error ToolMessages so the run can continue."""
+    """将工具异常转换为错误 ``ToolMessage``，使 run 继续进行。"""
 
     def _build_error_message(self, request: ToolCallRequest, exc: Exception) -> ToolMessage:
+        """根据异常构造返回给模型的错误 ``ToolMessage``。"""
         tool_name = str(request.tool_call.get("name") or "unknown_tool")
         tool_call_id = str(request.tool_call.get("id") or _MISSING_TOOL_CALL_ID)
         detail = str(exc).strip() or exc.__class__.__name__
@@ -42,6 +44,7 @@ class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
+        """同步入口：拦截工具调用，按需修改 ``request`` 后调用 ``handler``。"""
         try:
             return handler(request)
         except GraphBubbleUp:
@@ -57,6 +60,7 @@ class ToolErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
+        """异步入口：拦截工具调用，按需修改 ``request`` 后 ``await handler``。"""
         try:
             return await handler(request)
         except GraphBubbleUp:
@@ -74,7 +78,7 @@ def _build_runtime_middlewares(
     include_dangling_tool_call_patch: bool,
     lazy_init: bool = True,
 ) -> list[AgentMiddleware]:
-    """Build shared base middlewares for agent execution."""
+    """为 Agent 执行构建共享的基线中间件。"""
     from deerflow.agents.middlewares.llm_error_handling_middleware import LLMErrorHandlingMiddleware
     from deerflow.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
     from deerflow.agents.middlewares.tool_output_budget_middleware import ToolOutputBudgetMiddleware
@@ -129,7 +133,7 @@ def _build_runtime_middlewares(
 
 
 def build_lead_runtime_middlewares(*, app_config: AppConfig, lazy_init: bool = True) -> list[AgentMiddleware]:
-    """Middlewares shared by lead agent runtime before lead-only middlewares."""
+    """Lead Agent 运行时共享的中间件，附加在 Lead 专属中间件之前。"""
     return _build_runtime_middlewares(
         app_config=app_config,
         include_uploads=True,
@@ -144,7 +148,7 @@ def build_subagent_runtime_middlewares(
     model_name: str | None = None,
     lazy_init: bool = True,
 ) -> list[AgentMiddleware]:
-    """Middlewares shared by subagent runtime before subagent-only middlewares."""
+    """子代理运行时共享的中间件，附加在子代理专属中间件之前。"""
     if app_config is None:
         from deerflow.config import get_app_config
 

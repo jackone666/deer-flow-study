@@ -1,4 +1,4 @@
-"""Built-in tool for invoking external ACP-compatible agents."""
+"""调用外部 ACP 兼容 Agent 的内置工具。"""
 
 import logging
 import os
@@ -13,24 +13,26 @@ logger = logging.getLogger(__name__)
 
 
 class _InvokeACPAgentInput(BaseModel):
+    """``invoke_acp_agent`` 工具的入参模型。"""
+
     agent: str = Field(description="Name of the ACP agent to invoke")
     prompt: str = Field(description="The concise task prompt to send to the agent")
 
 
 def _get_work_dir(thread_id: str | None) -> str:
-    """Get the per-thread ACP workspace directory.
+    """获取当前线程的 ACP 工作区目录。
 
-    Each thread gets an isolated workspace under
-    ``{base_dir}/threads/{thread_id}/acp-workspace/`` so that concurrent
-    sessions cannot read or overwrite each other's ACP agent outputs.
+    每个线程在 ``{base_dir}/threads/{thread_id}/acp-workspace/`` 下获得一个隔离
+    的工作区,避免并发会话互相读写 ACP Agent 的产出。
 
-    Falls back to the legacy global ``{base_dir}/acp-workspace/`` when
-    ``thread_id`` is not available (e.g. embedded / direct invocation).
+    在 ``thread_id`` 不可用时(例如嵌入式/直接调用)回退到旧式全局
+    ``{base_dir}/acp-workspace/``。目录不存在时自动创建。
 
-    The directory is created automatically if it does not exist.
+    Args:
+        thread_id: 当前线程 ID,可为 None。
 
     Returns:
-        An absolute physical filesystem path to use as the working directory.
+        作为工作目录的绝对文件系统路径。
     """
     from deerflow.config.paths import get_paths
     from deerflow.runtime.user_context import get_effective_user_id
@@ -51,7 +53,7 @@ def _get_work_dir(thread_id: str | None) -> str:
 
 
 def _build_mcp_servers() -> dict[str, dict[str, Any]]:
-    """Build ACP ``mcpServers`` config from DeerFlow's enabled MCP servers."""
+    """基于 DeerFlow 启用的 MCP 服务器构造 ACP ``mcpServers`` 配置。"""
     from deerflow.config.extensions_config import ExtensionsConfig
     from deerflow.mcp.client import build_servers_config
 
@@ -59,11 +61,17 @@ def _build_mcp_servers() -> dict[str, dict[str, Any]]:
 
 
 def _build_acp_mcp_servers() -> list[dict[str, Any]]:
-    """Build ACP ``mcpServers`` payload for ``new_session``.
+    """为 ``new_session`` 构造 ACP ``mcpServers`` 负载。
 
-    The ACP client expects a list of server objects, while DeerFlow's MCP helper
-    returns a name -> config mapping for the LangChain MCP adapter. This helper
-    converts the enabled servers into the ACP wire format.
+    ACP 客户端期望一个服务器对象列表,而 DeerFlow 的 MCP 辅助函数为 LangChain
+    MCP 适配器返回 ``name -> config`` 映射。本函数把已启用服务器转换为 ACP
+    线协议格式。
+
+    Returns:
+        可直接传入 ACP ``new_session`` 的 MCP 服务器列表。
+
+    Raises:
+        ValueError: 启用的 MCP 服务器配置缺失必需字段或传输类型不支持。
     """
     from deerflow.config.extensions_config import ExtensionsConfig
 
@@ -95,12 +103,12 @@ def _build_acp_mcp_servers() -> list[dict[str, Any]]:
 
 
 def _build_permission_response(options: list[Any], *, auto_approve: bool) -> Any:
-    """Build an ACP permission response.
+    """构造 ACP 权限响应。
 
-    When ``auto_approve`` is True, selects the first ``allow_once`` (preferred)
-    or ``allow_always`` option.  When False (the default), always cancels —
-    permission requests must be handled by the ACP agent's own policy or the
-    agent must be configured to operate without requesting permissions.
+    - ``auto_approve=True`` 时按优先级选择第一个 ``allow_once``(首选)或
+      ``allow_always`` 选项。
+    - 默认 ``False`` 时总是取消——权限请求需要由 ACP Agent 自身策略处理,
+      或在配置中以无权限模式运行。
     """
     from acp import RequestPermissionResponse
     from acp.schema import AllowedOutcome, DeniedOutcome
@@ -125,7 +133,16 @@ def _build_permission_response(options: list[Any], *, auto_approve: bool) -> Any
 
 
 def _format_invocation_error(agent: str, cmd: str, exc: Exception) -> str:
-    """Return a user-facing ACP invocation error with actionable remediation."""
+    """构造面向用户的 ACP 调用错误,附带可行的修复提示。
+
+    Args:
+        agent: 出错的 Agent 名。
+        cmd: 调用的可执行命令字符串。
+        exc: 触发的异常。
+
+    Returns:
+        人类可读的错误描述与下一步建议。
+    """
     if not isinstance(exc, FileNotFoundError):
         return f"Error invoking ACP agent '{agent}': {exc}"
 
@@ -137,16 +154,16 @@ def _format_invocation_error(agent: str, cmd: str, exc: Exception) -> str:
 
 
 def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
-    """Create the ``invoke_acp_agent`` tool with a description generated from configured agents.
+    """根据配置的 Agent 创建 ``invoke_acp_agent`` 工具,描述中自动包含可用 Agent 列表。
 
-    The tool description includes the list of available agents so that the LLM
-    knows which agents it can invoke without requiring hardcoded names.
+    把可用 Agent 列表写入工具描述,可以让 LLM 知道可调用哪些 Agent,而不必硬编码
+    名称。
 
     Args:
-        agents: Mapping of agent name -> ``ACPAgentConfig``.
+        agents: Agent 名到 :class:`ACPAgentConfig` 的映射。
 
     Returns:
-        A LangChain ``BaseTool`` ready to be included in the tool list.
+        可直接加入工具列表的 LangChain :class:`BaseTool`。
     """
     agent_lines = "\n".join(f"- {name}: {cfg.description}" for name, cfg in agents.items())
     description = (
@@ -163,6 +180,7 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
     _agents = dict(agents)
 
     async def _invoke(agent: str, prompt: str, config: Annotated[RunnableConfig, InjectedToolArg] = None) -> str:
+        """内部辅助方法。"""
         logger.info("Invoking ACP agent %s (prompt length: %d)", agent, len(prompt))
         logger.debug("Invoking ACP agent %s with prompt: %.200s%s", agent, prompt, "..." if len(prompt) > 200 else "")
         if agent not in _agents:
@@ -179,16 +197,19 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
             return "Error: agent-client-protocol package is not installed. Run `uv sync` to install project dependencies."
 
         class _CollectingClient(Client):
-            """Minimal ACP Client that collects streamed text from session updates."""
+            """最小化 ACP 客户端:从 session 更新中收集流式文本。"""
 
             def __init__(self) -> None:
+                """初始化 self。"""
                 self._chunks: list[str] = []
 
             @property
             def collected_text(self) -> str:
+                """拼接所有已收集文本块,作为 Agent 的最终回复。"""
                 return "".join(self._chunks)
 
             async def session_update(self, session_id: str, update, **kwargs) -> None:  # type: ignore[override]
+                """捕获会话中的文本内容块,忽略其它类型更新。"""
                 try:
                     from acp.schema import TextContentBlock
 
@@ -198,6 +219,7 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
                     pass
 
             async def request_permission(self, options, session_id: str, tool_call, **kwargs):  # type: ignore[override]
+                """根据 ``auto_approve_permissions`` 自动响应 ACP Agent 的权限请求。"""
                 response = _build_permission_response(options, auto_approve=agent_config.auto_approve_permissions)
                 outcome = response.outcome.outcome
                 if outcome == "selected":

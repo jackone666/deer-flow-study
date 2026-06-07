@@ -1,4 +1,5 @@
-"""LLM error handling middleware with retry/backoff and user-facing fallbacks."""
+"""带重试/退避和面向用户降级处理的 LLM 错误处理中间件。"""
+
 
 from __future__ import annotations
 
@@ -64,13 +65,19 @@ _AUTH_PATTERNS = (
 
 
 class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
-    """Retry transient LLM errors and surface graceful assistant messages."""
+    """对瞬时 LLM 错误进行重试并以友好的助手消息兜底。"""
 
     retry_max_attempts: int = 3
     retry_base_delay_ms: int = 1000
     retry_cap_delay_ms: int = 8000
 
     def __init__(self, *, app_config: AppConfig, **kwargs: Any) -> None:
+        """初始化中间件，配置熔断参数。
+
+        Args:
+            app_config: 应用配置，用于读取熔断器阈值与恢复超时。
+            **kwargs: 透传给父类 ``AgentMiddleware`` 的参数。
+        """
         super().__init__(**kwargs)
 
         self.circuit_failure_threshold = app_config.circuit_breaker.failure_threshold
@@ -84,7 +91,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         self._circuit_probe_in_flight = False
 
     def _check_circuit(self) -> bool:
-        """Returns True if circuit is OPEN (fast fail), False otherwise."""
+        """检查熔断器状态：开启时返回 ``True`` 表示快速失败。"""
         with self._circuit_lock:
             now = time.time()
 
@@ -103,6 +110,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             return False
 
     def _record_success(self) -> None:
+        """内部辅助方法。"""
         with self._circuit_lock:
             if self._circuit_state != "closed" or self._circuit_failure_count > 0:
                 logger.info("Circuit breaker reset (Closed). LLM service recovered.")
@@ -112,6 +120,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
             self._circuit_probe_in_flight = False
 
     def _record_failure(self) -> None:
+        """内部辅助方法。"""
         with self._circuit_lock:
             if self._circuit_state == "half_open":
                 self._circuit_open_until = time.time() + self.circuit_recovery_timeout_sec
@@ -136,6 +145,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
                     )
 
     def _classify_error(self, exc: BaseException) -> tuple[bool, str]:
+        """执行赋值。"""
         detail = _extract_error_detail(exc)
         lowered = detail.lower()
         error_code = _extract_error_code(exc)
@@ -163,6 +173,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         return False, "generic"
 
     def _build_retry_delay_ms(self, attempt: int, exc: BaseException) -> int:
+        """执行赋值。"""
         retry_after = _extract_retry_after_ms(exc)
         if retry_after is not None:
             return retry_after
@@ -170,11 +181,13 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         return min(backoff, self.retry_cap_delay_ms)
 
     def _build_retry_message(self, attempt: int, wait_ms: int, reason: str) -> str:
+        """执行赋值。"""
         seconds = max(1, round(wait_ms / 1000))
         reason_text = "provider is busy" if reason == "busy" else "provider request failed temporarily"
         return f"LLM request retry {attempt}/{self.retry_max_attempts}: {reason_text}. Retrying in {seconds}s."
 
     def _build_circuit_breaker_message(self) -> str:
+        """返回值。"""
         return "The configured LLM provider is currently unavailable due to continuous failures. Circuit breaker is engaged to protect the system. Please wait a moment before trying again."
 
     def _build_error_fallback_message(
@@ -185,6 +198,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         reason: str,
         detail: str,
     ) -> AIMessage:
+        """返回值。"""
         return AIMessage(
             content=content,
             additional_kwargs={
@@ -196,6 +210,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         )
 
     def _build_user_message(self, exc: BaseException, reason: str) -> str:
+        """执行赋值。"""
         detail = _extract_error_detail(exc)
         if reason == "quota":
             return "The configured LLM provider rejected the request because the account is out of quota, billing is unavailable, or usage is restricted. Please fix the provider account and try again."
@@ -206,6 +221,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         return f"LLM request failed: {detail}"
 
     def _build_user_fallback_message(self, exc: BaseException, reason: str) -> AIMessage:
+        """返回值。"""
         return self._build_error_fallback_message(
             self._build_user_message(exc, reason),
             error_type=type(exc).__name__,
@@ -214,6 +230,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         )
 
     def _emit_retry_event(self, attempt: int, wait_ms: int, reason: str) -> None:
+        """内部辅助方法。"""
         try:
             from langgraph.config import get_stream_writer
 
@@ -237,6 +254,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
+        """同步入口：拦截模型调用，必要时修改 ``request`` 后调用 ``handler``。"""
         if self._check_circuit():
             return self._build_error_fallback_message(
                 self._build_circuit_breaker_message(),
@@ -288,6 +306,7 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
+        """异步入口：拦截模型调用，必要时修改 ``request`` 后 ``await handler``。"""
         if self._check_circuit():
             return self._build_error_fallback_message(
                 self._build_circuit_breaker_message(),
@@ -335,10 +354,12 @@ class LLMErrorHandlingMiddleware(AgentMiddleware[AgentState]):
 
 
 def _matches_any(detail: str, patterns: tuple[str, ...]) -> bool:
+    """检查 *detail* 是否包含任一模式子串。"""
     return any(pattern in detail for pattern in patterns)
 
 
 def _extract_error_code(exc: BaseException) -> Any:
+    """从异常对象中尽力抽取错误代码字段。"""
     for attr in ("code", "error_code"):
         value = getattr(exc, attr, None)
         if value not in (None, ""):
@@ -356,6 +377,7 @@ def _extract_error_code(exc: BaseException) -> Any:
 
 
 def _extract_status_code(exc: BaseException) -> int | None:
+    """从异常对象中尽力抽取 HTTP 状态码。"""
     for attr in ("status_code", "status"):
         value = getattr(exc, attr, None)
         if isinstance(value, int):
@@ -366,6 +388,7 @@ def _extract_status_code(exc: BaseException) -> int | None:
 
 
 def _extract_retry_after_ms(exc: BaseException) -> int | None:
+    """从 HTTP 响应头中解析 ``Retry-After`` 提示的等待毫秒数。"""
     response = getattr(exc, "response", None)
     headers = getattr(response, "headers", None)
     if headers is None:
@@ -395,6 +418,7 @@ def _extract_retry_after_ms(exc: BaseException) -> int | None:
 
 
 def _extract_error_detail(exc: BaseException) -> str:
+    """从异常对象中尽力抽取可读的错误详情字符串。"""
     detail = str(exc).strip()
     if detail:
         return detail

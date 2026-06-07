@@ -1,4 +1,4 @@
-"""Tool for creating and evolving custom skills."""
+"""创建与演进自定义技能的工具。"""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ _skill_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
 def _get_lock(name: str) -> asyncio.Lock:
+    """按技能名惰性获取(创建)异步锁,避免不同技能并发修改互相干扰。"""
     lock = _skill_locks.get(name)
     if lock is None:
         lock = asyncio.Lock()
@@ -31,6 +32,7 @@ def _get_lock(name: str) -> asyncio.Lock:
 
 
 def _get_thread_id(runtime: Runtime | None) -> str | None:
+    """从 runtime 中提取 thread_id(优先 context,其次 configurable)。"""
     if runtime is None:
         return None
     if runtime.context and runtime.context.get("thread_id"):
@@ -39,6 +41,7 @@ def _get_thread_id(runtime: Runtime | None) -> str | None:
 
 
 def _history_record(*, action: str, file_path: str, prev_content: str | None, new_content: str | None, thread_id: str | None, scanner: dict[str, Any]) -> dict[str, Any]:
+    """构造一条技能变更历史记录。"""
     return {
         "action": action,
         "author": "agent",
@@ -51,6 +54,7 @@ def _history_record(*, action: str, file_path: str, prev_content: str | None, ne
 
 
 async def _scan_or_raise(content: str, *, executable: bool, location: str) -> dict[str, str]:
+    """调用安全扫描;在 ``block`` 或可执行内容非 ``allow`` 时抛出 :class:`ValueError`。"""
     result = await scan_skill_content(content, executable=executable, location=location)
     if result.decision == "block":
         raise ValueError(f"Security scan blocked the write: {result.reason}")
@@ -60,6 +64,7 @@ async def _scan_or_raise(content: str, *, executable: bool, location: str) -> di
 
 
 async def _to_thread(func, /, *args, **kwargs):
+    """把同步函数丢到工作线程中执行,避免阻塞事件循环。"""
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
@@ -73,16 +78,24 @@ async def _skill_manage_impl(
     replace: str | None = None,
     expected_count: int | None = None,
 ) -> str:
-    """Manage custom skills under skills/custom/.
+    """``skill_manage`` 工具的具体实现,负责对 ``skills/custom/`` 下技能执行增删改。
 
     Args:
-        action: One of create, patch, edit, delete, write_file, remove_file.
-        name: Skill name in hyphen-case.
-        content: New file content for create, edit, or write_file.
-        path: Supporting file path for write_file or remove_file.
-        find: Existing text to replace for patch.
-        replace: Replacement text for patch.
-        expected_count: Optional expected number of replacements for patch.
+        runtime: LangChain 工具运行时。
+        action: 操作类型,取值 ``create``、``patch``、``edit``、``delete``、``write_file``、``remove_file``。
+        name: 技能名(连字符形式)。
+        content: 用于 create/edit/write_file 的新内容。
+        path: write_file/remove_file 的目标相对路径。
+        find: patch 中待替换的旧文本。
+        replace: patch 中用于替换的新文本。
+        expected_count: patch 时可选的预期出现次数。
+
+    Returns:
+        描述操作结果的简短字符串。
+
+    Raises:
+        ValueError: 参数缺失、操作不支持或安全扫描拒绝时抛出。
+        FileNotFoundError: ``remove_file`` 目标不存在时抛出。
     """
     name = SkillStorage.validate_skill_name(name)
     lock = _get_lock(name)
@@ -212,16 +225,16 @@ async def skill_manage_tool(
     replace: str | None = None,
     expected_count: int | None = None,
 ) -> str:
-    """Manage custom skills under skills/custom/.
+    """在 ``skills/custom/`` 下管理自定义技能。
 
     Args:
-        action: One of create, patch, edit, delete, write_file, remove_file.
-        name: Skill name in hyphen-case.
-        content: New file content for create, edit, or write_file.
-        path: Supporting file path for write_file or remove_file.
-        find: Existing text to replace for patch.
-        replace: Replacement text for patch.
-        expected_count: Optional expected number of replacements for patch.
+        action: 操作类型,可选 ``create``、``patch``、``edit``、``delete``、``write_file``、``remove_file``。
+        name: 技能名(连字符形式)。
+        content: create/edit/write_file 时的新内容。
+        path: write_file/remove_file 的相对文件路径。
+        find: patch 中待替换的旧文本。
+        replace: patch 中的新文本。
+        expected_count: patch 时可选的预期出现次数。
     """
     return await _skill_manage_impl(
         runtime=runtime,

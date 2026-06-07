@@ -1,4 +1,4 @@
-"""Thread metadata persistence — ORM, abstract store, and concrete implementations."""
+"""Thread 元数据持久化——ORM、抽象 store 与具体实现。"""
 
 from __future__ import annotations
 
@@ -27,10 +27,20 @@ def make_thread_store(
     session_factory: async_sessionmaker[AsyncSession] | None,
     store: BaseStore | None = None,
 ) -> ThreadMetaStore:
-    """Create the appropriate ThreadMetaStore based on available backends.
+    """根据可用后端构造合适的 :class:`ThreadMetaStore`。
 
-    Returns a SQL-backed repository when a session factory is available,
-    otherwise falls back to the in-memory LangGraph Store implementation.
+    当提供 ``session_factory`` 时返回基于 SQL 的实现,否则回退到
+    LangGraph 内存版 ``Store`` 的实现。
+
+    Args:
+        session_factory: SQLAlchemy 异步 session 工厂,提供时启用 SQL 后端。
+        store: LangGraph ``BaseStore`` 实例,作为内存回退后端。
+
+    Returns:
+        适配环境的 :class:`ThreadMetaStore` 实例。
+
+    Raises:
+        ValueError: 当 ``session_factory`` 和 ``store`` 都未提供时抛出。
     """
     if session_factory is not None:
         return ThreadMetaRepository(session_factory)

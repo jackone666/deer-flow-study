@@ -1,11 +1,11 @@
-"""Async SQLAlchemy engine lifecycle management.
+"""异步 SQLAlchemy 引擎生命周期管理。
 
-Initializes at Gateway startup, provides session factory for
-repositories, disposes at shutdown.
+在 Gateway 启动时初始化，为各 repository 提供 session factory，
+关闭时统一释放。
 
-When database.backend="memory", init_engine is a no-op and
-get_session_factory() returns None. Repositories must check for
-None and fall back to in-memory implementations.
+当 ``database.backend="memory"`` 时，:func:`init_engine` 是空操作，
+:func:`get_session_factory` 返回 ``None``。Repository 必须显式判空
+并回退到内存实现。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 
 def _json_serializer(obj: object) -> str:
-    """JSON serializer with ensure_ascii=False for Chinese character support."""
+    """使用 ``ensure_ascii=False`` 的 JSON 序列化器，保留中文字符。"""
     return json.dumps(obj, ensure_ascii=False)
 
 
@@ -28,12 +28,16 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 async def _auto_create_postgres_db(url: str) -> None:
-    """Connect to the ``postgres`` maintenance DB and CREATE DATABASE.
+    """连接到 ``postgres`` 维护库并执行 ``CREATE DATABASE``。
 
-    The target database name is extracted from *url*.  The connection is
-    made to the default ``postgres`` database on the same server using
-    ``AUTOCOMMIT`` isolation (CREATE DATABASE cannot run inside a
-    transaction).
+    目标库名从 ``url`` 中提取。连接默认 ``postgres`` 库时使用
+    ``AUTOCOMMIT`` 隔离级别（``CREATE DATABASE`` 不能在事务中执行）。
+
+    Args:
+        url: 目标数据库的 SQLAlchemy URL。
+
+    Raises:
+        ValueError: URL 中未包含数据库名。
     """
     from sqlalchemy import text
     from sqlalchemy.engine.url import make_url
@@ -43,7 +47,7 @@ async def _auto_create_postgres_db(url: str) -> None:
     if not db_name:
         raise ValueError("Cannot auto-create database: no database name in URL")
 
-    # Connect to the default 'postgres' database to issue CREATE DATABASE
+    # 连接到默认的 'postgres' 库以执行 CREATE DATABASE
     maint_url = parsed.set(database="postgres")
     maint_engine = create_async_engine(maint_url, isolation_level="AUTOCOMMIT")
     try:
@@ -62,14 +66,18 @@ async def init_engine(
     pool_size: int = 5,
     sqlite_dir: str = "",
 ) -> None:
-    """Create the async engine and session factory, then auto-create tables.
+    """创建异步 engine 与 session factory，并自动建表。
 
     Args:
-        backend: "memory", "sqlite", or "postgres".
-        url: SQLAlchemy async URL (for sqlite/postgres).
-        echo: Echo SQL to log.
-        pool_size: Postgres connection pool size.
-        sqlite_dir: Directory to create for SQLite (ensured to exist).
+        backend: ``memory`` / ``sqlite`` / ``postgres`` 之一。
+        url: SQLAlchemy 异步 URL（sqlite/postgres 用）。
+        echo: 是否回显 SQL 到日志。
+        pool_size: Postgres 连接池大小。
+        sqlite_dir: SQLite 使用的目录（确保存在）。
+
+    Raises:
+        ImportError: postgres 后端但未安装 ``asyncpg``。
+        ValueError: 未知的 ``backend`` 名称。
     """
     global _engine, _session_factory
 
@@ -100,20 +108,18 @@ async def init_engine(
         os.makedirs(sqlite_dir or ".", exist_ok=True)
         _engine = create_async_engine(url, echo=echo, json_serializer=_json_serializer)
 
-        # Enable WAL on every new connection. SQLite PRAGMA settings are
-        # per-connection, so we wire the listener instead of running PRAGMA
-        # once at startup. WAL gives concurrent reads + writers without
-        # blocking and is the standard recommendation for any production
-        # SQLite deployment (TC-UPG-06 in AUTH_TEST_PLAN.md). The companion
-        # ``synchronous=NORMAL`` is the safe-and-fast pairing — fsync only
-        # at WAL checkpoint boundaries instead of every commit.
-        # Note: we do not set PRAGMA busy_timeout here — Python's sqlite3
-        # driver already defaults to a 5-second busy timeout (see the
-        # ``timeout`` kwarg of ``sqlite3.connect``), and aiosqlite /
-        # SQLAlchemy's aiosqlite dialect inherit that default.  Setting
-        # it again would be a no-op.
+        # 为每个新连接启用 WAL。SQLite 的 PRAGMA 是 per-connection 的，
+        # 因此这里挂事件监听器而不是启动时执行一次。WAL 让多读单写并发
+        # 互不阻塞，是任何生产 SQLite 部署的标准做法（见
+        # AUTH_TEST_PLAN.md 的 TC-UPG-06）。配套的 ``synchronous=NORMAL``
+        # 是安全与速度兼顾的组合——只在 WAL checkpoint 边界 fsync。
+        # 注意：这里不设置 PRAGMA busy_timeout——Python 的 sqlite3 驱动
+        # 本身已默认 5 秒 busy timeout（参见 ``sqlite3.connect`` 的
+        # ``timeout`` kwarg），aiosqlite / SQLAlchemy 的 aiosqlite dialect
+        # 继承该默认值，重复设置是 no-op。
         @event.listens_for(_engine.sync_engine, "connect")
         def _enable_sqlite_wal(dbapi_conn, _record):  # noqa: ARG001 — SQLAlchemy contract
+            """为每条新建 SQLite 连接启用 WAL、同步级别与外键。"""
             cursor = dbapi_conn.cursor()
             try:
                 cursor.execute("PRAGMA journal_mode=WAL;")
@@ -134,16 +140,16 @@ async def init_engine(
 
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
-    # Auto-create tables (dev convenience). Production should use Alembic.
+    # 自动建表（开发期便利）。生产应使用 Alembic。
     from deerflow.persistence.base import Base
 
-    # Import all models so Base.metadata discovers them.
-    # When no models exist yet (scaffolding phase), this is a no-op.
+    # 导入所有模型以便 ``Base.metadata`` 发现。
+    # 尚无模型时（脚手架阶段），这里是 no-op。
     try:
         import deerflow.persistence.models  # noqa: F401
     except ImportError:
-        # Models package not yet available — tables won't be auto-created.
-        # This is expected during initial scaffolding or minimal installs.
+        # 模型包暂不可用——不会自动建表。
+        # 脚手架阶段或最小化安装时属于预期情况。
         logger.debug("deerflow.persistence.models not found; skipping auto-create tables")
 
     try:
@@ -151,9 +157,9 @@ async def init_engine(
             await conn.run_sync(Base.metadata.create_all)
     except Exception as exc:
         if backend == "postgres" and "does not exist" in str(exc):
-            # Database not yet created — attempt to auto-create it, then retry.
+            # 库尚未创建——尝试自动创建并重试
             await _auto_create_postgres_db(url)
-            # Rebuild engine against the now-existing database
+            # 在新库上重建 engine
             await _engine.dispose()
             _engine = create_async_engine(url, echo=echo, pool_size=pool_size, pool_pre_ping=True, json_serializer=_json_serializer)
             _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
@@ -166,7 +172,11 @@ async def init_engine(
 
 
 async def init_engine_from_config(config) -> None:
-    """Convenience: init engine from a DatabaseConfig object."""
+    """便捷入口：从 :class:`DatabaseConfig` 初始化引擎。
+
+    Args:
+        config: ``DatabaseConfig`` 兼容对象（含 ``backend``、``app_sqlalchemy_url`` 等字段）。
+    """
     if config.backend == "memory":
         await init_engine("memory")
         return
@@ -180,17 +190,17 @@ async def init_engine_from_config(config) -> None:
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession] | None:
-    """Return the async session factory, or None if backend=memory."""
+    """返回异步 session factory；``backend=memory`` 时返回 ``None``。"""
     return _session_factory
 
 
 def get_engine() -> AsyncEngine | None:
-    """Return the async engine, or None if not initialized."""
+    """返回异步 engine；未初始化时返回 ``None``。"""
     return _engine
 
 
 async def close_engine() -> None:
-    """Dispose the engine, release all connections."""
+    """释放 engine，关闭所有连接。"""
     global _engine, _session_factory
     if _engine is not None:
         await _engine.dispose()

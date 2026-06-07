@@ -1,4 +1,4 @@
-"""ACP (Agent Client Protocol) agent configuration loaded from config.yaml."""
+"""ACP（Agent Client Protocol）agent 配置，从 config.yaml 加载。"""
 
 import logging
 from collections.abc import Mapping
@@ -9,19 +9,19 @@ logger = logging.getLogger(__name__)
 
 
 class ACPAgentConfig(BaseModel):
-    """Configuration for a single ACP-compatible agent."""
+    """单个 ACP 兼容 agent 的配置。"""
 
-    command: str = Field(description="Command to launch the ACP agent subprocess")
-    args: list[str] = Field(default_factory=list, description="Additional command arguments")
-    env: dict[str, str] = Field(default_factory=dict, description="Environment variables to inject into the agent subprocess. Values starting with $ are resolved from host environment variables.")
-    description: str = Field(description="Description of the agent's capabilities (shown in tool description)")
-    model: str | None = Field(default=None, description="Model hint passed to the agent (optional)")
+    command: str = Field(description="启动 ACP agent 子进程的命令")
+    args: list[str] = Field(default_factory=list, description="附加的命令行参数")
+    env: dict[str, str] = Field(default_factory=dict, description="注入到 agent 子进程的环境变量；以 $ 开头的值会从宿主机环境变量解析。")
+    description: str = Field(description="agent 能力的描述（会展示在 tool description 中）")
+    model: str | None = Field(default=None, description="传递给 agent 的模型提示（可选）")
     auto_approve_permissions: bool = Field(
         default=False,
         description=(
-            "When True, DeerFlow automatically approves all ACP permission requests from this agent "
-            "(allow_once preferred over allow_always). When False (default), all permission requests "
-            "are denied — the agent must be configured to operate without requesting permissions."
+            "为 True 时，DeerFlow 自动批准该 agent 发出的所有 ACP 权限请求"
+            "（优先 allow_once 而非 allow_always）。默认为 False 时，所有权限请求都会被拒绝"
+            "——此时 agent 必须配置为不发起权限请求即可工作。"
         ),
     )
 
@@ -30,22 +30,22 @@ _acp_agents: dict[str, ACPAgentConfig] = {}
 
 
 def get_acp_agents() -> dict[str, ACPAgentConfig]:
-    """Get the currently configured ACP agents.
+    """获取当前配置的 ACP agents。
 
     Returns:
-        Mapping of agent name -> ACPAgentConfig.  Empty dict if no ACP agents are configured.
+        dict[str, ACPAgentConfig]: agent 名到 :class:`ACPAgentConfig` 的映射；未配置时为空字典。
     """
     return _acp_agents
 
 
 def load_acp_config_from_dict(config_dict: Mapping[str, Mapping[str, object]] | None) -> None:
-    """Load ACP agent configuration from a dictionary (typically from config.yaml).
+    """从字典（通常来自 config.yaml）加载 ACP agent 配置。
 
     Args:
-        config_dict: Mapping of agent name -> config fields.
+        config_dict: agent 名到配置字段的映射；``None`` 视为空。
     """
     global _acp_agents
     if config_dict is None:
         config_dict = {}
     _acp_agents = {name: ACPAgentConfig(**cfg) for name, cfg in config_dict.items()}
-    logger.info("ACP config loaded: %d agent(s): %s", len(_acp_agents), list(_acp_agents.keys()))
+    logger.info("ACP 配置已加载：%d 个 agent：%s", len(_acp_agents), list(_acp_agents.keys()))

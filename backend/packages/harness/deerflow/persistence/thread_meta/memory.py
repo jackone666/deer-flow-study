@@ -1,8 +1,8 @@
-"""In-memory ThreadMetaStore backed by LangGraph BaseStore.
+"""基于 LangGraph :class:`BaseStore` 的内存版 :class:`ThreadMetaStore`。
 
-Used when database.backend=memory. Delegates to the LangGraph Store's
-``("threads",)`` namespace — the same namespace used by the Gateway
-router for thread records.
+在 ``database.backend=memory`` 时使用。底层走 LangGraph Store 的
+``("threads",)`` 命名空间——与 Gateway 路由存储 thread 记录所用
+的命名空间一致。
 """
 
 from __future__ import annotations
@@ -19,7 +19,14 @@ THREADS_NS: tuple[str, ...] = ("threads",)
 
 
 class MemoryThreadMetaStore(ThreadMetaStore):
+    """基于 LangGraph Store 的内存 thread 元数据存储。"""
+
     def __init__(self, store: BaseStore) -> None:
+        """构造 store。
+
+        Args:
+            store: LangGraph :class:`BaseStore` 实例。
+        """
         self._store = store
 
     async def _get_owned_record(
@@ -28,7 +35,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         user_id: str | None | _AutoSentinel,
         method_name: str,
     ) -> dict | None:
-        """Fetch a record and verify ownership. Returns a mutable copy, or None."""
+        """获取记录并校验 owner；返回可变副本或 ``None``。"""
         resolved = resolve_user_id(user_id, method_name=method_name)
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
@@ -47,6 +54,18 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         display_name: str | None = None,
         metadata: dict | None = None,
     ) -> dict:
+        """创建一条 thread 元数据记录。
+
+        Args:
+            thread_id: thread ID。
+            assistant_id: 可选的 assistant 关联。
+            user_id: 拥有者；``AUTO`` 时回退到当前请求用户。
+            display_name: 可选的展示名（标题）。
+            metadata: 初始 metadata dict。
+
+        Returns:
+            dict: 写入后的记录。
+        """
         resolved_user_id = resolve_user_id(user_id, method_name="MemoryThreadMetaStore.create")
         now = now_iso()
         record: dict[str, Any] = {
@@ -64,6 +83,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         return record
 
     async def get(self, thread_id: str, *, user_id: str | None | _AutoSentinel = AUTO) -> dict | None:
+        """按 ID 获取 thread 元数据。"""
         return await self._get_owned_record(thread_id, user_id, "MemoryThreadMetaStore.get")
 
     async def search(
@@ -75,6 +95,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         offset: int = 0,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> list[dict[str, Any]]:
+        """按 metadata / status / owner 过滤搜索 thread。"""
         resolved_user_id = resolve_user_id(user_id, method_name="MemoryThreadMetaStore.search")
         filter_dict: dict[str, Any] = {}
         if metadata:
@@ -93,6 +114,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         return [self._item_to_dict(item) for item in items]
 
     async def check_access(self, thread_id: str, user_id: str, *, require_existing: bool = False) -> bool:
+        """检查 ``user_id`` 对 ``thread_id`` 的访问权限。"""
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return not require_existing
@@ -102,6 +124,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         return record_user_id == user_id
 
     async def update_display_name(self, thread_id: str, display_name: str, *, user_id: str | None | _AutoSentinel = AUTO) -> None:
+        """更新 thread 的展示名（标题）。"""
         record = await self._get_owned_record(thread_id, user_id, "MemoryThreadMetaStore.update_display_name")
         if record is None:
             return
@@ -110,6 +133,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         await self._store.aput(THREADS_NS, thread_id, record)
 
     async def update_status(self, thread_id: str, status: str, *, user_id: str | None | _AutoSentinel = AUTO) -> None:
+        """更新 thread 状态。"""
         record = await self._get_owned_record(thread_id, user_id, "MemoryThreadMetaStore.update_status")
         if record is None:
             return
@@ -118,6 +142,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         await self._store.aput(THREADS_NS, thread_id, record)
 
     async def update_metadata(self, thread_id: str, metadata: dict, *, user_id: str | None | _AutoSentinel = AUTO) -> None:
+        """合并 ``metadata`` 到 thread 的 metadata 字段。"""
         record = await self._get_owned_record(thread_id, user_id, "MemoryThreadMetaStore.update_metadata")
         if record is None:
             return
@@ -128,6 +153,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         await self._store.aput(THREADS_NS, thread_id, record)
 
     async def delete(self, thread_id: str, *, user_id: str | None | _AutoSentinel = AUTO) -> None:
+        """删除 thread 元数据。"""
         record = await self._get_owned_record(thread_id, user_id, "MemoryThreadMetaStore.delete")
         if record is None:
             return
@@ -135,7 +161,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
 
     @staticmethod
     def _item_to_dict(item) -> dict[str, Any]:
-        """Convert a Store SearchItem to the dict format expected by callers."""
+        """把 LangGraph Store 的 SearchItem 转换为调用方期望的 dict 格式。"""
         val = item.value
         return {
             "thread_id": item.key,
@@ -144,8 +170,8 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             "display_name": val.get("display_name"),
             "status": val.get("status", "idle"),
             "metadata": val.get("metadata", {}),
-            # ``coerce_iso`` heals legacy unix-second values written by
-            # earlier Gateway versions that called ``str(time.time())``.
+            # ``coerce_iso`` 会修复早期 Gateway 写下的 ``str(time.time())``
+            # 形式的 unix-second 字符串。
             "created_at": coerce_iso(val.get("created_at", "")),
             "updated_at": coerce_iso(val.get("updated_at", "")),
         }

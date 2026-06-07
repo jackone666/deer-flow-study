@@ -1,18 +1,17 @@
-"""Async checkpointer factory.
+"""异步 Checkpointer 工厂。
 
-Provides an **async context manager** for long-running async servers that need
-proper resource cleanup.
+为需要妥善资源清理的长时间运行的异步服务器提供 **异步上下文管理器**。
 
-Supported backends: memory, sqlite, postgres.
+支持的后端：memory、sqlite、postgres。
 
-Usage (e.g. FastAPI lifespan)::
+使用示例（如 FastAPI lifespan）::
 
     from deerflow.runtime.checkpointer.async_provider import make_checkpointer
 
     async with make_checkpointer() as checkpointer:
-        app.state.checkpointer = checkpointer  # InMemorySaver if not configured
+        app.state.checkpointer = checkpointer  # 未配置时为 InMemorySaver
 
-For sync usage see :mod:`deerflow.runtime.checkpointer.provider`.
+同步用法参见 :mod:`deerflow.runtime.checkpointer.provider`。
 """
 
 from __future__ import annotations
@@ -36,19 +35,21 @@ logger = logging.getLogger(__name__)
 
 
 def _prepare_sqlite_checkpointer_path(raw: str) -> str:
+    """执行赋值。"""
     conn_str = resolve_sqlite_conn_str(raw)
     ensure_sqlite_parent_dir(conn_str)
     return conn_str
 
 
 def _prepare_database_sqlite_checkpointer_path(db_config) -> str:
+    """执行赋值。"""
     conn_str = db_config.checkpointer_sqlite_path
     ensure_sqlite_parent_dir(conn_str)
     return conn_str
 
 
 def _build_postgres_pool(conn_string: str):
-    """Build an AsyncConnectionPool with TCP keepalive and connection checking."""
+    """构建带 TCP keepalive 与连接检查的 ``AsyncConnectionPool``。"""
     from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
 
@@ -68,7 +69,7 @@ def _build_postgres_pool(conn_string: str):
 
 
 def _ensure_postgres_imports():
-    """Import and return (AsyncPostgresSaver, AsyncConnectionPool), raising ImportError on failure."""
+    """导入并返回 ``(AsyncPostgresSaver, AsyncConnectionPool)``，失败时抛出 ``ImportError``。"""
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     except ImportError as exc:
@@ -89,7 +90,7 @@ def _ensure_postgres_imports():
 
 @contextlib.asynccontextmanager
 async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
-    """Async context manager that constructs and tears down a checkpointer."""
+    """构造并销毁 checkpointer 的异步上下文管理器。"""
     if config.type == "memory":
         from langgraph.checkpoint.memory import InMemorySaver
 
@@ -130,7 +131,7 @@ async def _async_checkpointer(config) -> AsyncIterator[Checkpointer]:
 
 @contextlib.asynccontextmanager
 async def _async_checkpointer_from_database(db_config) -> AsyncIterator[Checkpointer]:
-    """Async context manager that constructs a checkpointer from unified DatabaseConfig."""
+    """从统一的 ``DatabaseConfig`` 构造 checkpointer 的异步上下文管理器。"""
     if db_config.backend == "memory":
         from langgraph.checkpoint.memory import InMemorySaver
 
@@ -166,18 +167,19 @@ async def _async_checkpointer_from_database(db_config) -> AsyncIterator[Checkpoi
 
 @contextlib.asynccontextmanager
 async def make_checkpointer(app_config: AppConfig | None = None) -> AsyncIterator[Checkpointer]:
-    """Async context manager that yields a checkpointer for the caller's lifetime.
-    Resources are opened on enter and closed on exit -- no global state::
+    """为调用方生命周期提供一个 checkpointer 的异步上下文管理器。
+
+    资源在进入时打开、退出时关闭——不依赖全局状态::
 
         async with make_checkpointer(app_config) as checkpointer:
             app.state.checkpointer = checkpointer
 
-    Yields an ``InMemorySaver`` when no checkpointer is configured in *config.yaml*.
+    当 *config.yaml* 未配置 checkpointer 时产出 ``InMemorySaver``。
 
-    Priority:
-    1. Legacy ``checkpointer:`` config section (backward compatible)
-    2. Unified ``database:`` config section
-    3. Default InMemorySaver
+    优先级：
+    1. 旧式 ``checkpointer:`` 配置段（向后兼容）；
+    2. 统一 ``database:`` 配置段；
+    3. 默认 ``InMemorySaver``。
     """
 
     if app_config is None:

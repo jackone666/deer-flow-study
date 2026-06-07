@@ -1,4 +1,4 @@
-"""Security helpers for sandbox capability gating."""
+"""沙箱能力开关相关的安全辅助函数。"""
 
 from deerflow.config import get_app_config
 
@@ -21,7 +21,14 @@ LOCAL_BASH_SUBAGENT_DISABLED_MESSAGE = (
 
 
 def uses_local_sandbox_provider(config=None) -> bool:
-    """Return True when the active sandbox provider is the host-local provider."""
+    """判断当前激活的沙箱提供者是否为主机本地提供者。
+
+    Args:
+        config: 可选的应用配置对象,默认通过 :func:`get_app_config` 读取。
+
+    Returns:
+        当前沙箱提供者为 :class:`LocalSandboxProvider` 时返回 True,否则返回 False。
+    """
     if config is None:
         config = get_app_config()
 
@@ -33,7 +40,16 @@ def uses_local_sandbox_provider(config=None) -> bool:
 
 
 def is_host_bash_allowed(config=None) -> bool:
-    """Return whether host bash execution is explicitly allowed."""
+    """判断是否显式允许在主机上执行 bash。
+
+    非本地沙箱提供者一律视为允许;本地沙箱提供者则需要 ``allow_host_bash`` 配置为真。
+
+    Args:
+        config: 可选的应用配置对象,默认通过 :func:`get_app_config` 读取。
+
+    Returns:
+        允许主机 bash 执行时返回 True,否则返回 False。
+    """
     if config is None:
         config = get_app_config()
 

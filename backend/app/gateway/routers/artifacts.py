@@ -1,3 +1,9 @@
+"""``/api/threads/{id}/artifacts/*`` 路由：提供 DeerFlow 主题产物的下载服务。
+
+产物根据 MIME 强制以附件形式返回（含 text/html、image/svg+xml 等活跃内容
+类型）以降低 XSS 风险；``?download=true`` 仍然对其它类型强制下载。
+"""
+
 import logging
 import mimetypes
 import zipfile
@@ -25,11 +31,13 @@ _SKILL_ARCHIVE_READ_CHUNK_SIZE = 64 * 1024
 
 
 def _build_content_disposition(disposition_type: str, filename: str) -> str:
-    """Build an RFC 5987 encoded Content-Disposition header value."""
+    """构造一个符合 RFC 5987 的 Content-Disposition 头字段值。"""
+
     return f"{disposition_type}; filename*=UTF-8''{quote(filename)}"
 
 
 def _build_attachment_headers(filename: str, extra_headers: dict[str, str] | None = None) -> dict[str, str]:
+    """构造包含 RFC 5987 ``Content-Disposition`` 的响应头集合。"""
     headers = {"Content-Disposition": _build_content_disposition("attachment", filename)}
     if extra_headers:
         headers.update(extra_headers)
@@ -37,7 +45,8 @@ def _build_attachment_headers(filename: str, extra_headers: dict[str, str] | Non
 
 
 def is_text_file_by_content(path: Path, sample_size: int = 8192) -> bool:
-    """Check if file is text by examining content for null bytes."""
+    """通过检查内容中是否包含空字节来判断文件是否为文本。"""
+
     try:
         with open(path, "rb") as f:
             chunk = f.read(sample_size)
@@ -48,7 +57,8 @@ def is_text_file_by_content(path: Path, sample_size: int = 8192) -> bool:
 
 
 def _read_skill_archive_member(zip_ref: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
-    """Read a .skill archive member while enforcing an uncompressed size cap."""
+    """在强制未压缩大小上限的前提下读取 ``.skill`` 归档中的成员。"""
+
     if info.file_size > MAX_SKILL_ARCHIVE_MEMBER_BYTES:
         raise HTTPException(status_code=413, detail="Skill archive member is too large to preview")
 
@@ -64,15 +74,14 @@ def _read_skill_archive_member(zip_ref: zipfile.ZipFile, info: zipfile.ZipInfo) 
 
 
 def _extract_file_from_skill_archive(zip_path: Path, internal_path: str) -> bytes | None:
-    """Extract a file from a .skill ZIP archive.
-
-    Args:
-        zip_path: Path to the .skill file (ZIP archive).
-        internal_path: Path to the file inside the archive (e.g., "SKILL.md").
-
-    Returns:
-        The file content as bytes, or None if not found.
+    """从 ``.skill`` ZIP 归档中提取文件。
+    
+            Args:
+                zip_path: ``.skill`` 文件（ZIP 归档）路径。
+                internal_path: 归档内文件路径。
+                max_uncompressed_size: 允许的最大未压缩大小（字节）。
     """
+
     if not zipfile.is_zipfile(zip_path):
         return None
 
@@ -103,38 +112,12 @@ def _extract_file_from_skill_archive(zip_path: Path, internal_path: str) -> byte
 )
 @require_permission("threads", "read", owner_check=True)
 async def get_artifact(thread_id: str, path: str, request: Request, download: bool = False) -> Response:
-    """Get an artifact file by its path.
-
-    The endpoint automatically detects file types and returns appropriate content types.
-    Use the `download` query parameter to force file download for non-active content.
-
-    Args:
-        thread_id: The thread ID.
-        path: The artifact path with virtual prefix (e.g., mnt/user-data/outputs/file.txt).
-        request: FastAPI request object (automatically injected).
-
-    Returns:
-        The file content as a FileResponse with appropriate content type:
-        - Active content (HTML/XHTML/SVG): Served as download attachment
-        - Text files: Plain text with proper MIME type
-        - Binary files: Inline display with download option
-
-    Raises:
-        HTTPException:
-            - 400 if path is invalid or not a file
-            - 403 if access denied (path traversal detected)
-            - 404 if file not found
-
-    Query Parameters:
-        download (bool): If true, forces attachment download for file types that are
-            otherwise returned inline or as plain text. Active HTML/XHTML/SVG content
-            is always downloaded regardless of this flag.
-
-    Example:
-        - Get text file inline: `/api/threads/abc123/artifacts/mnt/user-data/outputs/notes.txt`
-        - Download file: `/api/threads/abc123/artifacts/mnt/user-data/outputs/data.csv?download=true`
-        - Active web content such as `.html`, `.xhtml`, and `.svg` artifacts is always downloaded
+    """通过路径获取 artifact 文件。
+    
+            端点会自动检测文件类型并返回相应的 content type。
+            使用 ``download`` 查询参数可强制返回带文件名的下载响应。
     """
+
     # Check if this is a request for a file inside a .skill archive (e.g., xxx.skill/SKILL.md)
     if ".skill/" in path:
         # Split the path at ".skill/" to get the ZIP file path and internal path

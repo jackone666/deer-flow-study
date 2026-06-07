@@ -1,3 +1,9 @@
+"""``/api/skills`` 路由：列出、详情、安装与启用/禁用 DeerFlow 技能。
+
+支持从 ``.skill`` 归档安装到 ``skills/custom/``，并对 frontmatter 进行
+安全扫描。
+"""
+
 import json
 import logging
 from pathlib import Path
@@ -22,7 +28,8 @@ router = APIRouter(prefix="/api", tags=["skills"])
 
 
 class SkillResponse(BaseModel):
-    """Response model for skill information."""
+    """Skill 信息的响应模型。"""
+
 
     name: str = Field(..., description="Name of the skill")
     description: str = Field(..., description="Description of what the skill does")
@@ -32,26 +39,30 @@ class SkillResponse(BaseModel):
 
 
 class SkillsListResponse(BaseModel):
-    """Response model for listing all skills."""
+    """所有 skill 列表的响应模型。"""
+
 
     skills: list[SkillResponse]
 
 
 class SkillUpdateRequest(BaseModel):
-    """Request model for updating a skill."""
+    """更新 skill 的请求模型。"""
+
 
     enabled: bool = Field(..., description="Whether to enable or disable the skill")
 
 
 class SkillInstallRequest(BaseModel):
-    """Request model for installing a skill from a .skill file."""
+    """从 ``.skill`` 文件安装 skill 的请求模型。"""
+
 
     thread_id: str = Field(..., description="The thread ID where the .skill file is located")
     path: str = Field(..., description="Virtual path to the .skill file (e.g., mnt/user-data/outputs/my-skill.skill)")
 
 
 class SkillInstallResponse(BaseModel):
-    """Response model for skill installation."""
+    """Skill 安装的响应模型。"""
+
 
     success: bool = Field(..., description="Whether the installation was successful")
     skill_name: str = Field(..., description="Name of the installed skill")
@@ -59,23 +70,31 @@ class SkillInstallResponse(BaseModel):
 
 
 class CustomSkillContentResponse(SkillResponse):
+    """自定义技能的 ``SKILL.md`` 原始内容响应模型。"""
+
     content: str = Field(..., description="Raw SKILL.md content")
 
 
 class CustomSkillUpdateRequest(BaseModel):
+    """自定义技能 ``SKILL.md`` 内容更新请求体。"""
+
     content: str = Field(..., description="Replacement SKILL.md content")
 
 
 class CustomSkillHistoryResponse(BaseModel):
+    """自定义技能的修改历史响应模型。"""
+
     history: list[dict]
 
 
 class SkillRollbackRequest(BaseModel):
+    """技能回滚请求体。"""
+
     history_index: int = Field(default=-1, description="History entry index to restore from, defaulting to the latest change.")
 
 
 def _skill_to_response(skill: Skill) -> SkillResponse:
-    """Convert a Skill object to a SkillResponse."""
+    """把 ``Skill`` 业务对象转换为 ``SkillResponse`` 响应模型。"""
     return SkillResponse(
         name=skill.name,
         description=skill.description,
@@ -92,6 +111,7 @@ def _skill_to_response(skill: Skill) -> SkillResponse:
     description="Retrieve a list of all available skills from both public and custom directories.",
 )
 async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+    """列出全部已发现的技能（公开 + 自定义）。"""
     try:
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
@@ -107,6 +127,7 @@ async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResp
     description="Install a skill from a .skill file (ZIP archive) located in the thread's user-data directory.",
 )
 async def install_skill(request: SkillInstallRequest, config: AppConfig = Depends(get_config)) -> SkillInstallResponse:
+    """从 ``.skill`` 归档中安装技能到 ``skills/custom/``。"""
     try:
         skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
         result = await get_or_new_skill_storage(app_config=config).ainstall_skill_from_archive(skill_file_path)
@@ -127,6 +148,7 @@ async def install_skill(request: SkillInstallRequest, config: AppConfig = Depend
 
 @router.get("/skills/custom", response_model=SkillsListResponse, summary="List Custom Skills")
 async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsListResponse:
+    """仅列出用户自定义（``CUSTOM``）类别的技能。"""
     try:
         skills = [skill for skill in get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False) if skill.category == SkillCategory.CUSTOM]
         return SkillsListResponse(skills=[_skill_to_response(skill) for skill in skills])
@@ -137,6 +159,7 @@ async def list_custom_skills(config: AppConfig = Depends(get_config)) -> SkillsL
 
 @router.get("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Get Custom Skill Content")
 async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+    """获取指定自定义技能的元信息与 ``SKILL.md`` 原始内容。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -153,6 +176,7 @@ async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_conf
 
 @router.put("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Edit Custom Skill")
 async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+    """更新自定义技能的 ``SKILL.md`` 内容；写入前进行安全扫描并落历史。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -190,6 +214,7 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
 
 @router.delete("/skills/custom/{skill_name}", summary="Delete Custom Skill")
 async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> dict[str, bool]:
+    """删除指定的自定义技能并记录删除历史。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -218,6 +243,7 @@ async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_c
 
 @router.get("/skills/custom/{skill_name}/history", response_model=CustomSkillHistoryResponse, summary="Get Custom Skill History")
 async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(get_config)) -> CustomSkillHistoryResponse:
+    """读取自定义技能的修改历史。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -233,6 +259,7 @@ async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(
 
 @router.post("/skills/custom/{skill_name}/rollback", response_model=CustomSkillContentResponse, summary="Rollback Custom Skill")
 async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+    """把自定义技能回滚到历史记录中的指定版本。"""
     try:
         storage = get_or_new_skill_storage(app_config=config)
         if not storage.custom_skill_exists(skill_name) and not storage.get_skill_history_file(skill_name).exists():
@@ -285,6 +312,7 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
     description="Retrieve detailed information about a specific skill by its name.",
 )
 async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> SkillResponse:
+    """按名称获取指定技能的元信息。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -308,6 +336,7 @@ async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) ->
     description="Update a skill's enabled status by modifying the extensions_config.json file.",
 )
 async def update_skill(skill_name: str, request: SkillUpdateRequest, config: AppConfig = Depends(get_config)) -> SkillResponse:
+    """更新技能的启用状态并刷新运行时缓存。"""
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)

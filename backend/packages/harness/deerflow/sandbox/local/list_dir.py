@@ -1,20 +1,25 @@
+"""本地沙箱的目录遍历工具。
+
+提供 :func:`list_dir`,在遍历过程中自动跳过 :data:`deerflow.sandbox.search.IGNORE_PATTERNS`
+匹配的文件/目录,并避免越界跟随符号链接。
+"""
+
 from pathlib import Path
 
 from deerflow.sandbox.search import should_ignore_name
 
 
 def list_dir(path: str, max_depth: int = 2) -> list[str]:
-    """
-    List files and directories up to max_depth levels deep.
+    """递归列出指定深度内的文件与目录。
 
     Args:
-        path: The root directory path to list.
-        max_depth: Maximum depth to traverse (default: 2).
-                   1 = only direct children, 2 = children + grandchildren, etc.
+        path: 根目录路径。
+        max_depth: 最大递归深度,默认 2;1 表示仅直接子项,2 表示子项+孙项,依此类推。
 
     Returns:
-        A list of absolute paths for files and directories,
-        excluding items matching IGNORE_PATTERNS.
+        排序后的绝对路径列表(目录项末尾保留 ``/`` 标记);命中
+        :data:`deerflow.sandbox.search.IGNORE_PATTERNS` 的项会被排除;当根路径
+        不是目录时返回空列表。
     """
     result: list[str] = []
     root_path = Path(path).resolve()
@@ -23,6 +28,7 @@ def list_dir(path: str, max_depth: int = 2) -> list[str]:
         return result
 
     def _is_within_root(candidate: Path) -> bool:
+        """判断 ``candidate`` 是否位于 ``root_path`` 内(防止符号链接越界)。"""
         try:
             candidate.relative_to(root_path)
             return True
@@ -30,7 +36,7 @@ def list_dir(path: str, max_depth: int = 2) -> list[str]:
             return False
 
     def _traverse(current_path: Path, current_depth: int) -> None:
-        """Recursively traverse directories up to max_depth."""
+        """递归遍历目录直到 ``max_depth``。"""
         if current_depth > max_depth:
             return
 

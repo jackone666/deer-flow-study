@@ -1,4 +1,4 @@
-"""Memory API router for retrieving and managing global memory data."""
+"""Memory API 路由，用于获取与管理全局记忆数据。"""
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -19,14 +19,16 @@ router = APIRouter(prefix="/api", tags=["memory"])
 
 
 class ContextSection(BaseModel):
-    """Model for context sections (user and history)."""
+    """上下文片段（user 和 history）模型。"""
+
 
     summary: str = Field(default="", description="Summary content")
     updatedAt: str = Field(default="", description="Last update timestamp")
 
 
 class UserContext(BaseModel):
-    """Model for user context."""
+    """用户上下文模型。"""
+
 
     workContext: ContextSection = Field(default_factory=ContextSection)
     personalContext: ContextSection = Field(default_factory=ContextSection)
@@ -34,7 +36,8 @@ class UserContext(BaseModel):
 
 
 class HistoryContext(BaseModel):
-    """Model for history context."""
+    """历史上下文模型。"""
+
 
     recentMonths: ContextSection = Field(default_factory=ContextSection)
     earlierContext: ContextSection = Field(default_factory=ContextSection)
@@ -42,7 +45,8 @@ class HistoryContext(BaseModel):
 
 
 class Fact(BaseModel):
-    """Model for a memory fact."""
+    """记忆事实模型。"""
+
 
     id: str = Field(..., description="Unique identifier for the fact")
     content: str = Field(..., description="Fact content")
@@ -54,7 +58,8 @@ class Fact(BaseModel):
 
 
 class MemoryResponse(BaseModel):
-    """Response model for memory data."""
+    """记忆数据的响应模型。"""
+
 
     version: str = Field(default="1.0", description="Memory schema version")
     lastUpdated: str = Field(default="", description="Last update timestamp")
@@ -64,7 +69,7 @@ class MemoryResponse(BaseModel):
 
 
 def _map_memory_fact_value_error(exc: ValueError) -> HTTPException:
-    """Convert updater validation errors into stable API responses."""
+    """把 updater 的校验错误转换为稳定的 API 响应。"""
     if exc.args and exc.args[0] == "confidence":
         detail = "Invalid confidence value; must be between 0 and 1."
     else:
@@ -73,7 +78,8 @@ def _map_memory_fact_value_error(exc: ValueError) -> HTTPException:
 
 
 class FactCreateRequest(BaseModel):
-    """Request model for creating a memory fact."""
+    """创建记忆事实的请求模型。"""
+
 
     content: str = Field(..., min_length=1, description="Fact content")
     category: str = Field(default="context", description="Fact category")
@@ -81,7 +87,8 @@ class FactCreateRequest(BaseModel):
 
 
 class FactPatchRequest(BaseModel):
-    """PATCH request model that preserves existing values for omitted fields."""
+    """PATCH 请求模型，对未提供的字段保留原值。"""
+
 
     content: str | None = Field(default=None, min_length=1, description="Fact content")
     category: str | None = Field(default=None, description="Fact category")
@@ -89,7 +96,8 @@ class FactPatchRequest(BaseModel):
 
 
 class MemoryConfigResponse(BaseModel):
-    """Response model for memory configuration."""
+    """记忆配置的响应模型。"""
+
 
     enabled: bool = Field(..., description="Whether memory is enabled")
     storage_path: str = Field(..., description="Path to memory storage file")
@@ -101,7 +109,8 @@ class MemoryConfigResponse(BaseModel):
 
 
 class MemoryStatusResponse(BaseModel):
-    """Response model for memory status."""
+    """记忆状态的响应模型。"""
+
 
     config: MemoryConfigResponse
     data: MemoryResponse
@@ -115,10 +124,10 @@ class MemoryStatusResponse(BaseModel):
     description="Retrieve the current global memory data including user context, history, and facts.",
 )
 async def get_memory() -> MemoryResponse:
-    """Get the current global memory data.
+    """获取当前全局记忆数据。
 
     Returns:
-        The current memory data with user context, history, and facts.
+        包含用户上下文、历史与事实的当前记忆数据。
 
     Example Response:
         ```json
@@ -160,13 +169,12 @@ async def get_memory() -> MemoryResponse:
     description="Reload memory data from the storage file, refreshing the in-memory cache.",
 )
 async def reload_memory() -> MemoryResponse:
-    """Reload memory data from file.
+    """从存储文件重新加载记忆数据。
 
-    This forces a reload of the memory data from the storage file,
-    useful when the file has been modified externally.
+    强制从存储文件重新加载记忆数据，在文件被外部修改时非常有用。
 
     Returns:
-        The reloaded memory data.
+        重新加载后的记忆数据。
     """
     memory_data = reload_memory_data(user_id=get_effective_user_id())
     return MemoryResponse(**memory_data)
@@ -180,7 +188,7 @@ async def reload_memory() -> MemoryResponse:
     description="Delete all saved memory data and reset the memory structure to an empty state.",
 )
 async def clear_memory() -> MemoryResponse:
-    """Clear all persisted memory data."""
+    """清空所有持久化的记忆数据。"""
     try:
         memory_data = clear_memory_data(user_id=get_effective_user_id())
     except OSError as exc:
@@ -197,7 +205,7 @@ async def clear_memory() -> MemoryResponse:
     description="Create a single saved memory fact manually.",
 )
 async def create_memory_fact_endpoint(request: FactCreateRequest) -> MemoryResponse:
-    """Create a single fact manually."""
+    """手动创建一条事实。"""
     try:
         memory_data = create_memory_fact(
             content=request.content,
@@ -221,7 +229,7 @@ async def create_memory_fact_endpoint(request: FactCreateRequest) -> MemoryRespo
     description="Delete a single saved memory fact by its fact id.",
 )
 async def delete_memory_fact_endpoint(fact_id: str) -> MemoryResponse:
-    """Delete a single fact from memory by fact id."""
+    """按 fact id 删除一条记忆事实。"""
     try:
         memory_data = delete_memory_fact(fact_id, user_id=get_effective_user_id())
     except KeyError as exc:
@@ -240,7 +248,7 @@ async def delete_memory_fact_endpoint(fact_id: str) -> MemoryResponse:
     description="Partially update a single saved memory fact by its fact id while preserving omitted fields.",
 )
 async def update_memory_fact_endpoint(fact_id: str, request: FactPatchRequest) -> MemoryResponse:
-    """Partially update a single fact manually."""
+    """手动局部更新一条事实。"""
     try:
         memory_data = update_memory_fact(
             fact_id=fact_id,
@@ -267,7 +275,7 @@ async def update_memory_fact_endpoint(fact_id: str, request: FactPatchRequest) -
     description="Export the current global memory data as JSON for backup or transfer.",
 )
 async def export_memory() -> MemoryResponse:
-    """Export the current memory data."""
+    """导出当前记忆数据。"""
     memory_data = get_memory_data(user_id=get_effective_user_id())
     return MemoryResponse(**memory_data)
 
@@ -280,7 +288,7 @@ async def export_memory() -> MemoryResponse:
     description="Import and overwrite the current global memory data from a JSON payload.",
 )
 async def import_memory(request: MemoryResponse) -> MemoryResponse:
-    """Import and persist memory data."""
+    """导入并持久化记忆数据。"""
     try:
         memory_data = import_memory_data(request.model_dump(), user_id=get_effective_user_id())
     except OSError as exc:
@@ -296,10 +304,10 @@ async def import_memory(request: MemoryResponse) -> MemoryResponse:
     description="Retrieve the current memory system configuration.",
 )
 async def get_memory_config_endpoint() -> MemoryConfigResponse:
-    """Get the memory system configuration.
+    """获取记忆系统配置。
 
     Returns:
-        The current memory configuration settings.
+        当前的记忆系统配置参数。
 
     Example Response:
         ```json
@@ -334,10 +342,10 @@ async def get_memory_config_endpoint() -> MemoryConfigResponse:
     description="Retrieve both memory configuration and current data in a single request.",
 )
 async def get_memory_status() -> MemoryStatusResponse:
-    """Get the memory system status including configuration and data.
+    """获取包含配置与数据的记忆系统状态。
 
     Returns:
-        Combined memory configuration and current data.
+        记忆系统配置与当前数据的合并结果。
     """
     config = get_memory_config()
     memory_data = get_memory_data(user_id=get_effective_user_id())

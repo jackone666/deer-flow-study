@@ -1,13 +1,12 @@
-"""Persistent MCP session pool for stateful tool calls.
+"""用于有状态工具调用的持久 MCP 会话池。
 
-When MCP tools are loaded via langchain-mcp-adapters with ``session=None``,
-each tool call creates a new MCP session. For stateful servers like Playwright,
-this means browser state (opened pages, filled forms) is lost between calls.
+当通过 langchain-mcp-adapters 以 ``session=None`` 加载 MCP 工具时,每次工具调用
+都会新建一个 MCP 会话;对 Playwright 等有状态服务器来说,意味着浏览器状态
+(打开的页面、填好的表单)会在调用之间丢失。
 
-This module provides a session pool that maintains persistent MCP sessions,
-scoped by ``(server_name, scope_key)`` — typically scope_key is the thread_id —
-so that consecutive tool calls share the same session and server-side state.
-Sessions are evicted in LRU order when the pool reaches capacity.
+本模块提供按 ``(server_name, scope_key)``(``scope_key`` 通常是 ``thread_id``)
+隔离的持久 MCP 会话池,让同线程的连续工具调用共享同一会话与服务器端状态。
+池满后按 LRU 淘汰。
 """
 
 from __future__ import annotations
@@ -24,12 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class MCPSessionPool:
-    """Manages persistent MCP sessions scoped by ``(server_name, scope_key)``."""
+    """管理按 ``(server_name, scope_key)`` 隔离的持久 MCP 会话。"""
 
     MAX_SESSIONS = 256
-    SESSION_CLOSE_TIMEOUT = 5.0  # seconds to wait when closing a session via run_coroutine_threadsafe
+    SESSION_CLOSE_TIMEOUT = 5.0  # 通过 run_coroutine_threadsafe 关闭会话时的等待秒数
 
     def __init__(self) -> None:
+        """初始化池与同步锁。"""
         self._entries: OrderedDict[
             tuple[str, str],
             tuple[ClientSession, asyncio.AbstractEventLoop],
@@ -45,19 +45,18 @@ class MCPSessionPool:
         scope_key: str,
         connection: dict[str, Any],
     ) -> ClientSession:
-        """Get or create a persistent MCP session.
+        """获取或创建一个持久 MCP 会话。
 
-        If an existing session was created in a different event loop (e.g.
-        the sync-wrapper path), it is closed and replaced with a fresh one
-        in the current loop.
+        若已存在的会话属于另一个事件循环(例如 sync-wrapper 路径),会被关
+        闭并在当前循环中重建。
 
         Args:
-            server_name: MCP server name.
-            scope_key: Isolation key (typically thread_id).
-            connection: Connection configuration for ``create_session``.
+            server_name: MCP 服务器名。
+            scope_key: 隔离键,通常是 ``thread_id``。
+            connection: 传给 ``create_session`` 的连接配置。
 
         Returns:
-            An initialized ``ClientSession``.
+            已经过 :meth:`ClientSession.initialize` 的可用会话。
         """
         key = (server_name, scope_key)
         current_loop = asyncio.get_running_loop()
@@ -109,14 +108,14 @@ class MCPSessionPool:
     # ------------------------------------------------------------------
 
     async def _close_cm(self, key: tuple[str, str], cm: Any) -> None:
-        """Close a single context manager (must be called WITHOUT the lock)."""
+        """关闭单个 context manager(必须在未持锁状态下调用)。"""
         try:
             await cm.__aexit__(None, None, None)
         except Exception:
             logger.warning("Error closing MCP session %s", key, exc_info=True)
 
     async def close_scope(self, scope_key: str) -> None:
-        """Close all sessions for a given scope (e.g. thread_id)."""
+        """关闭指定 scope(如 ``thread_id``)的所有会话。"""
         with self._lock:
             keys = [k for k in self._entries if k[1] == scope_key]
             cms = [(k, self._context_managers.pop(k, None)) for k in keys]
@@ -127,7 +126,7 @@ class MCPSessionPool:
                 await self._close_cm(key, cm)
 
     async def close_server(self, server_name: str) -> None:
-        """Close all sessions for a given server."""
+        """关闭指定 MCP 服务器的所有会话。"""
         with self._lock:
             keys = [k for k in self._entries if k[0] == server_name]
             cms = [(k, self._context_managers.pop(k, None)) for k in keys]
@@ -138,7 +137,7 @@ class MCPSessionPool:
                 await self._close_cm(key, cm)
 
     async def close_all(self) -> None:
-        """Close every managed session."""
+        """关闭池中所有会话。"""
         with self._lock:
             cms = list(self._context_managers.items())
             self._context_managers.clear()
@@ -147,11 +146,10 @@ class MCPSessionPool:
             await self._close_cm(key, cm)
 
     def close_all_sync(self) -> None:
-        """Close all sessions using their owning event loops (synchronous).
+        """在所属事件循环上同步关闭所有会话。
 
-        Each session is closed on the loop it was created in, avoiding
-        cross-loop resource leaks.  Safe to call from any thread without an
-        active event loop.
+        每个会话都在它被创建的那个事件循环上关闭,避免跨循环资源泄漏;可以
+        在任何没有运行事件循环的线程中安全调用。
         """
         with self._lock:
             entries = list(self._entries.items())
@@ -183,7 +181,7 @@ _pool_lock = threading.Lock()
 
 
 def get_session_pool() -> MCPSessionPool:
-    """Return the global session-pool singleton."""
+    """返回全局的会话池单例。"""
     global _pool
     if _pool is None:
         with _pool_lock:
@@ -193,6 +191,6 @@ def get_session_pool() -> MCPSessionPool:
 
 
 def reset_session_pool() -> None:
-    """Reset the singleton (for tests)."""
+    """重置单例(供测试使用)。"""
     global _pool
     _pool = None

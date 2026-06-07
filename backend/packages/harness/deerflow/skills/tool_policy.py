@@ -1,3 +1,5 @@
+"""技能 allowed-tools 策略:聚合并按该策略过滤工具。"""
+
 import logging
 from typing import Protocol
 
@@ -7,16 +9,18 @@ logger = logging.getLogger(__name__)
 
 
 class NamedTool(Protocol):
+    """只需要 ``name`` 属性的工具协议,便于泛型过滤。"""
+
     name: str
 
 
 def allowed_tool_names_for_skills(skills: list[Skill]) -> set[str] | None:
-    """Return the union of explicit skill allowed-tools declarations.
+    """聚合技能中显式声明的 allowed-tools 集合。
 
-    None means legacy allow-all behavior. It is returned only when no loaded
-    skill declares allowed-tools. Once any skill declares the field, legacy
-    skills without the field contribute no tools instead of disabling the
-    explicit restrictions from other skills.
+    Returns:
+        - ``None`` 表示旧式"全允许"行为,只在没有任何技能声明 allowed-tools 时返回。
+        - 一旦有任意技能声明该字段,未声明的技能不再"放宽"到全允许,聚合结果仅
+          包含显式声明的工具名。
     """
     if not skills:
         return None
@@ -37,6 +41,7 @@ def allowed_tool_names_for_skills(skills: list[Skill]) -> set[str] | None:
 
 
 def filter_tools_by_skill_allowed_tools[ToolT: NamedTool](tools: list[ToolT], skills: list[Skill]) -> list[ToolT]:
+    """按聚合后的 allowed-tools 集合过滤工具列表。"""
     allowed = allowed_tool_names_for_skills(skills)
     if allowed is None:
         return tools

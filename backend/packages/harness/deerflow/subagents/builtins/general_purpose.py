@@ -1,4 +1,4 @@
-"""General-purpose subagent configuration."""
+"""通用子 Agent(general-purpose)的配置。"""
 
 from deerflow.subagents.config import SubagentConfig
 

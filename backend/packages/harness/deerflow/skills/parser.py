@@ -1,3 +1,5 @@
+"""SKILL.md 文件的解析逻辑。"""
+
 import logging
 import re
 from pathlib import Path
@@ -10,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _format_yaml_error(skill_file: Path, exc: yaml.YAMLError, source: str) -> str:
-    """Render a developer-friendly explanation of a YAML front-matter error."""
+    """生成对开发者友好的 YAML front-matter 错误说明。"""
 
     lines = [f"Invalid YAML front-matter in {skill_file}: {exc}"]
 
@@ -41,11 +43,18 @@ def _format_yaml_error(skill_file: Path, exc: yaml.YAMLError, source: str) -> st
 
 
 def parse_allowed_tools(raw: object, skill_file: Path) -> list[str] | None:
-    """Parse the optional allowed-tools frontmatter field.
+    """解析可选的 ``allowed-tools`` frontmatter 字段。
 
-    Returns None when the field is omitted. Returns a list when the field is a
-    YAML sequence of strings, including an empty list for explicit no-tool
-    skills. Raises ValueError for malformed values.
+    Args:
+        raw: YAML 中读取到的原始值。
+        skill_file: 当前 SKILL.md 路径,用于错误提示。
+
+    Returns:
+        字段缺失时返回 None;为字符串列表时返回该列表(可为空列表,表示
+        显式声明无可用工具)。
+
+    Raises:
+        ValueError: 字段值不是字符串列表或包含空字符串。
     """
     if raw is None:
         return None
@@ -64,16 +73,15 @@ def parse_allowed_tools(raw: object, skill_file: Path) -> list[str] | None:
 
 
 def parse_skill_file(skill_file: Path, category: SkillCategory, relative_path: Path | None = None) -> Skill | None:
-    """Parse a SKILL.md file and extract metadata.
+    """解析 SKILL.md 文件并提取元数据。
 
     Args:
-        skill_file: Path to the SKILL.md file.
-        category: Category of the skill.
-        relative_path: Relative path from the category root to the skill
-            directory.  Defaults to the skill directory name when omitted.
+        skill_file: SKILL.md 文件路径。
+        category: 技能所属分类。
+        relative_path: 从分类根目录到技能目录的相对路径,缺省时使用技能目录名。
 
     Returns:
-        Skill object if parsing succeeds, None otherwise.
+        解析成功时返回 :class:`Skill`;失败时返回 None。
     """
     if not skill_file.exists() or skill_file.name != SKILL_MD_FILE:
         return None

@@ -1,14 +1,14 @@
-"""Custom OpenAI Codex provider using ChatGPT Codex Responses API.
+"""基于 ChatGPT Codex Responses API 的自定义 OpenAI Codex provider。
 
-Uses Codex CLI OAuth tokens with chatgpt.com/backend-api/codex/responses endpoint.
-This is the same endpoint that the Codex CLI uses internally.
+使用 Codex CLI OAuth token 走 ``chatgpt.com/backend-api/codex/responses``
+端点，与 Codex CLI 内部使用的端点一致。
 
-Supports:
-- Auto-load credentials from ~/.codex/auth.json
-- Responses API format (not Chat Completions)
-- Tool calling
-- Streaming (required by the endpoint)
-- Retry with exponential backoff
+支持：
+- 从 ``~/.codex/auth.json`` 自动加载凭据
+- Responses API 格式（而非 Chat Completions）
+- 工具调用
+- 流式（端点要求）
+- 指数退避重试
 """
 
 import json
@@ -30,11 +30,11 @@ CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 
 def _build_usage_metadata(oai_usage: dict) -> dict:
-    """Convert Codex/Responses API usage dict to LangChain usage_metadata format.
+    """把 Codex/Responses API 的 usage 字典转换为 LangChain ``usage_metadata`` 格式。
 
-    Maps OpenAI Responses API token usage fields to the dict structure that
-    LangChain AIMessage.usage_metadata expects. This avoids depending on
-    langchain_openai private helpers like ``_create_usage_metadata_responses``.
+    将 OpenAI Responses API 的 token 用量字段映射为 LangChain
+    ``AIMessage.usage_metadata`` 期望的字典结构，避免依赖
+    ``langchain_openai`` 的私有辅助函数 ``_create_usage_metadata_responses``。
     """
     input_tokens = oai_usage.get("input_tokens", 0)
     output_tokens = oai_usage.get("output_tokens", 0)
@@ -59,9 +59,9 @@ MAX_RETRIES = 3
 
 
 class CodexChatModel(BaseChatModel):
-    """LangChain chat model using ChatGPT Codex Responses API.
+    """基于 ChatGPT Codex Responses API 的 LangChain chat model。
 
-    Config example:
+    配置示例：
         - name: gpt-5.4
           use: deerflow.models.openai_codex_provider:CodexChatModel
           model: gpt-5.4
@@ -78,18 +78,29 @@ class CodexChatModel(BaseChatModel):
 
     @classmethod
     def is_lc_serializable(cls) -> bool:
+        """声明本类可被 LangChain 序列化。"""
         return True
 
     @property
     def _llm_type(self) -> str:
+        """LangChain 内部使用的模型类型标识。"""
         return "codex-responses"
 
     def _validate_retry_config(self) -> None:
+        """校验 ``retry_max_attempts`` 不小于 1。
+
+        Raises:
+            ValueError: 配置不合法时。
+        """
         if self.retry_max_attempts < 1:
             raise ValueError("retry_max_attempts must be >= 1")
 
     def model_post_init(self, __context: Any) -> None:
-        """Auto-load Codex CLI credentials."""
+        """自动加载 Codex CLI 凭据。
+
+        Raises:
+            ValueError: 找不到 Codex CLI 凭据时。
+        """
         self._validate_retry_config()
 
         cred = self._load_codex_auth()
@@ -103,12 +114,19 @@ class CodexChatModel(BaseChatModel):
         super().model_post_init(__context)
 
     def _load_codex_auth(self) -> CodexCliCredential | None:
-        """Load access_token and account_id from Codex CLI auth."""
+        """从 Codex CLI 凭据加载 ``access_token`` 与 ``account_id``。"""
         return load_codex_cli_credential()
 
     @classmethod
     def _normalize_content(cls, content: Any) -> str:
-        """Flatten LangChain content blocks into plain text for Codex."""
+        """把 LangChain 的 content block 展平为 Codex 可接受的纯文本。
+
+        Args:
+            content: 任意形态的 LangChain content。
+
+        Returns:
+            str: 展平后的字符串。
+        """
         if isinstance(content, str):
             return content
 
@@ -135,9 +153,13 @@ class CodexChatModel(BaseChatModel):
             return str(content)
 
     def _convert_messages(self, messages: list[BaseMessage]) -> tuple[str, list[dict]]:
-        """Convert LangChain messages to Responses API format.
+        """把 LangChain 消息转换为 Responses API 格式。
 
-        Returns (instructions, input_items).
+        Args:
+            messages: LangChain 消息列表。
+
+        Returns:
+            tuple[str, list[dict]]: ``(instructions, input_items)``。
         """
         instructions_parts: list[str] = []
         input_items = []
@@ -178,7 +200,14 @@ class CodexChatModel(BaseChatModel):
         return instructions, input_items
 
     def _convert_tools(self, tools: list[dict]) -> list[dict]:
-        """Convert LangChain tool format to Responses API format."""
+        """把 LangChain 工具格式转换为 Responses API 格式。
+
+        Args:
+            tools: LangChain 工具字典列表。
+
+        Returns:
+            list[dict]: Responses API 工具字典列表。
+        """
         responses_tools = []
         for tool in tools:
             if tool.get("type") == "function" and "function" in tool:
@@ -203,7 +232,15 @@ class CodexChatModel(BaseChatModel):
         return responses_tools
 
     def _call_codex_api(self, messages: list[BaseMessage], tools: list[dict] | None = None) -> dict:
-        """Call the Codex Responses API and return the completed response."""
+        """调用 Codex Responses API 并返回最终响应。
+
+        Args:
+            messages: LangChain 消息列表。
+            tools: 可选的工具定义。
+
+        Returns:
+            dict: Codex 响应（``response.completed`` 之后聚合的结果）。
+        """
         instructions, input_items = self._convert_messages(messages)
 
         payload = {
@@ -246,7 +283,7 @@ class CodexChatModel(BaseChatModel):
         raise last_error
 
     def _stream_response(self, headers: dict, payload: dict) -> dict:
-        """Stream SSE from Codex API and collect the final response."""
+        """从 Codex API 流式读取 SSE 事件并聚合最终响应。"""
         completed_response = None
         streamed_output_items: dict[int, dict[str, Any]] = {}
 
@@ -270,8 +307,8 @@ class CodexChatModel(BaseChatModel):
         if not completed_response:
             raise RuntimeError("Codex API stream ended without response.completed event")
 
-        # ChatGPT Codex can emit the final assistant content only in stream events.
-        # When response.completed arrives, response.output may still be empty.
+        # ChatGPT Codex 可能在流事件中才发出最终的 assistant content。
+        # 当 ``response.completed`` 到达时，``response.output`` 仍可能为空。
         if streamed_output_items:
             merged_output = []
             response_output = completed_response.get("output")
@@ -294,7 +331,7 @@ class CodexChatModel(BaseChatModel):
 
     @staticmethod
     def _parse_sse_data_line(line: str) -> dict[str, Any] | None:
-        """Parse a data line from the SSE stream, skipping terminal markers."""
+        """解析 SSE 流中的一行 ``data:`` 帧，跳过终止标记。"""
         if not line.startswith("data:"):
             return None
 
@@ -311,7 +348,14 @@ class CodexChatModel(BaseChatModel):
         return data if isinstance(data, dict) else None
 
     def _parse_tool_call_arguments(self, output_item: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Parse function-call arguments, surfacing malformed payloads safely."""
+        """解析 function-call 参数，遇到格式异常时构造 invalid_tool_call。
+
+        Args:
+            output_item: Responses API 中的 function_call 输出项。
+
+        Returns:
+            tuple[dict | None, dict | None]: ``(parsed_args, invalid_tool_call)``，命中其一。
+        """
         raw_arguments = output_item.get("arguments", "{}")
         if isinstance(raw_arguments, dict):
             return raw_arguments, None
@@ -340,7 +384,7 @@ class CodexChatModel(BaseChatModel):
         return parsed_arguments, None
 
     def _parse_response(self, response: dict) -> ChatResult:
-        """Parse Codex Responses API response into LangChain ChatResult."""
+        """把 Codex Responses API 响应解析为 LangChain :class:`ChatResult`。"""
         content = ""
         tool_calls = []
         invalid_tool_calls = []
@@ -348,7 +392,7 @@ class CodexChatModel(BaseChatModel):
 
         for output_item in response.get("output", []):
             if output_item.get("type") == "reasoning":
-                # Extract reasoning summary text
+                # 抽取 reasoning summary 文本
                 for summary_item in output_item.get("summary", []):
                     if isinstance(summary_item, dict) and summary_item.get("type") == "summary_text":
                         reasoning_content += summary_item.get("text", "")
@@ -410,13 +454,31 @@ class CodexChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        """Generate a response using Codex Responses API."""
+        """使用 Codex Responses API 生成响应。
+
+        Args:
+            messages: LangChain 消息列表。
+            stop: 可选的停止词列表。
+            run_manager: LangChain 回调管理器。
+            **kwargs: 透传额外参数。
+
+        Returns:
+            ChatResult: 解析后的 LangChain 结果。
+        """
         tools = kwargs.get("tools", None)
         response = self._call_codex_api(messages, tools=tools)
         return self._parse_response(response)
 
     def bind_tools(self, tools: list, **kwargs: Any) -> Any:
-        """Bind tools for function calling."""
+        """绑定工具以启用函数调用。
+
+        Args:
+            tools: 工具列表（``BaseTool`` 或 dict）。
+            **kwargs: 透传给 :class:`RunnableBinding` 的额外参数。
+
+        Returns:
+            RunnableBinding: 绑定了格式化工具的 Runnable 视图。
+        """
         from langchain_core.runnables import RunnableBinding
         from langchain_core.tools import BaseTool
         from langchain_core.utils.function_calling import convert_to_openai_function

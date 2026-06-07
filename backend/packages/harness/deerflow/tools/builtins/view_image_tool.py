@@ -1,3 +1,5 @@
+"""view_image 工具:读取图片文件,供前端展示。"""
+
 import base64
 import mimetypes
 from pathlib import Path
@@ -27,10 +29,12 @@ _EXTENSION_TO_MIME = {
 
 
 def _is_allowed_image_virtual_path(image_path: str) -> bool:
+    """判断图片虚拟路径是否落在允许的 user-data 子目录内。"""
     return any(image_path == root or image_path.startswith(f"{root}/") for root in _ALLOWED_IMAGE_VIRTUAL_ROOTS)
 
 
 def _detect_image_mime(image_data: bytes) -> str | None:
+    """通过魔数检测图片 MIME 类型,不支持的格式返回 None。"""
     if image_data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
     if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -41,6 +45,7 @@ def _detect_image_mime(image_data: bytes) -> str | None:
 
 
 def _sanitize_image_error(error: Exception, thread_data: ThreadDataState | None) -> str:
+    """清洗图片读取错误,避免泄露主机路径。"""
     from deerflow.sandbox.tools import mask_local_paths_in_output
 
     return mask_local_paths_in_output(f"{type(error).__name__}: {error}", thread_data)
@@ -52,19 +57,19 @@ def view_image_tool(
     image_path: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """Read an image file.
+    """读取图片文件。
 
-    Use this tool to read an image file and make it available for display.
+    使用本工具读取图片文件并使其可被前端展示。
 
-    When to use the view_image tool:
-    - When you need to view an image file.
+    使用时机:
+    - 需要查看图片文件时。
 
-    When NOT to use the view_image tool:
-    - For non-image files (use present_files instead)
-    - For multiple files at once (use present_files instead)
+    不应使用本工具的情况:
+    - 非图片文件(应改用 present_files)
+    - 一次处理多张图片(应改用 present_files)
 
     Args:
-        image_path: Absolute /mnt/user-data virtual path to the image file. Common formats supported: jpg, jpeg, png, webp.
+        image_path: 图片的绝对 ``/mnt/user-data`` 虚拟路径,支持 jpg、jpeg、png、webp。
     """
     from deerflow.sandbox.exceptions import SandboxRuntimeError
     from deerflow.sandbox.tools import (

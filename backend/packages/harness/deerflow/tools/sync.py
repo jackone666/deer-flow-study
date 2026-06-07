@@ -1,4 +1,4 @@
-"""Utilities for invoking async tools from synchronous agent paths."""
+"""在同步 Agent 调用路径中调用异步工具的辅助工具。"""
 
 import asyncio
 import atexit
@@ -20,7 +20,14 @@ atexit.register(lambda: _SYNC_TOOL_EXECUTOR.shutdown(wait=False))
 
 
 def _get_runnable_config_param(func: Callable[..., Any]) -> str | None:
-    """Return the coroutine parameter that expects LangChain RunnableConfig."""
+    """返回协程签名中类型为 ``RunnableConfig`` 的参数名。
+
+    Args:
+        func: 待检查的可调用对象。
+
+    Returns:
+        形参名;无 ``RunnableConfig`` 形参或解析失败时返回 None。
+    """
     if isinstance(func, functools.partial):
         func = func.func
 
@@ -36,32 +43,38 @@ def _get_runnable_config_param(func: Callable[..., Any]) -> str | None:
 
 
 def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable[..., Any]:
-    """Build a synchronous wrapper for an asynchronous tool coroutine.
+    """为异步工具协程构造同步包装函数。
 
     Args:
-        coro: Async callable backing a LangChain tool.
-        tool_name: Tool name used in error logs.
+        coro: 支撑 LangChain 工具的异步可调用对象。
+        tool_name: 用于错误日志的工具名。
 
     Returns:
-        A sync callable suitable for ``BaseTool.func``.
+        适合赋值给 ``BaseTool.func`` 的同步可调用对象。
 
-    Notes:
-        If ``coro`` declares a ``RunnableConfig`` parameter, this wrapper
-        exposes ``config: RunnableConfig`` so LangChain can inject runtime
-        config and then forwards it to the coroutine's detected config
-        parameter. This covers DeerFlow's current config-sensitive tools, such
-        as ``invoke_acp_agent``.
+    注意:
+        如果 ``coro`` 声明了 ``RunnableConfig`` 形参,本包装会对外暴露
+        ``config: RunnableConfig``,以让 LangChain 注入运行时配置,然后转发到协程
+        实际期望的配置参数。这覆盖了 DeerFlow 当前对配置敏感的工具(如
+        ``invoke_acp_agent``)。
 
-        This wrapper intentionally does not synthesize a dynamic function
-        signature. A future async tool with a normal user-facing argument named
-        ``config`` and a separate ``RunnableConfig`` parameter named something
-        else, such as ``run_config``, may collide with LangChain's injected
-        ``config`` argument. Rename that user-facing field or extend this
-        helper before using that signature.
+        本包装故意不动态合成函数签名。如果未来某个异步工具同时存在一个普通用
+        户参数叫 ``config`` 以及一个 ``RunnableConfig`` 形参叫 ``run_config``
+        这样的命名,会与 LangChain 注入的 ``config`` 冲突——请在那种签名下
+        重命名用户字段或扩展本工具。
     """
     config_param = _get_runnable_config_param(coro)
 
     def run_coroutine(*args: Any, **kwargs: Any) -> Any:
+        """执行相应操作。
+        
+                Args:
+                    *args: Any。
+                    **kwargs: Any。
+        
+                Returns:
+                    Any。
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -80,6 +93,16 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
     if config_param:
 
         def sync_wrapper(*args: Any, config: RunnableConfig = None, **kwargs: Any) -> Any:
+            """执行相应操作。
+            
+                    Args:
+                        *args: Any。
+                        config: RunnableConfig: 关键字参数。
+                        **kwargs: Any。
+            
+                    Returns:
+                        Any。
+            """
             if config is not None or config_param not in kwargs:
                 kwargs[config_param] = config
             return run_coroutine(*args, **kwargs)
@@ -87,6 +110,15 @@ def make_sync_tool_wrapper(coro: Callable[..., Any], tool_name: str) -> Callable
         return sync_wrapper
 
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        """返回值。
+        
+                Args:
+                    *args: Any。
+                    **kwargs: Any。
+        
+                Returns:
+                    Any。
+        """
         return run_coroutine(*args, **kwargs)
 
     return sync_wrapper

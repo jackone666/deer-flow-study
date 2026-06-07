@@ -1,8 +1,7 @@
-"""Callback handler that collects LLM token usage within a subagent.
+"""在子 Agent 内收集 LLM token 用量的回调处理器。
 
-Each subagent execution creates its own collector. After the subagent
-finishes, the collected records are transferred to the parent RunJournal
-via :meth:`RunJournal.record_external_llm_usage_records`.
+每个子 Agent 执行实例化一个 collector;子 Agent 结束后,所收集的记录会被转移
+到父 RunJournal,通过 :meth:`RunJournal.record_external_llm_usage_records` 上报。
 """
 
 from __future__ import annotations
@@ -13,9 +12,14 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 
 class SubagentTokenCollector(BaseCallbackHandler):
-    """Lightweight callback handler that collects LLM token usage within a subagent."""
+    """轻量级回调处理器,用于在子 Agent 内累计 LLM token 用量。"""
 
     def __init__(self, caller: str):
+        """初始化 collector。
+
+        Args:
+            caller: 调用方标识,会写入每条记录便于后续归因。
+        """
         super().__init__()
         self.caller = caller
         self._records: list[dict[str, int | str]] = []
@@ -29,6 +33,14 @@ class SubagentTokenCollector(BaseCallbackHandler):
         tags: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
+        """LangChain ``on_llm_end`` 钩子:提取 usage_metadata 并去重累加。
+
+        Args:
+            response: LLM 返回的响应。
+            run_id: 当前运行的唯一 ID。
+            tags: LangChain 传入的标签。
+            **kwargs: 其它兼容参数。
+        """
         rid = str(run_id)
         if rid in self._counted_run_ids:
             return
@@ -59,5 +71,5 @@ class SubagentTokenCollector(BaseCallbackHandler):
                 return
 
     def snapshot_records(self) -> list[dict[str, int | str]]:
-        """Return a copy of the accumulated usage records."""
+        """返回累计用量记录的浅拷贝。"""
         return list(self._records)

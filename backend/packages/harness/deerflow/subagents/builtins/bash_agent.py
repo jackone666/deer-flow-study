@@ -1,4 +1,4 @@
-"""Bash command execution subagent configuration."""
+"""Bash 命令执行子 Agent 的配置。"""
 
 from deerflow.subagents.config import SubagentConfig
 

@@ -1,4 +1,4 @@
-"""Abstract base class for IM channels."""
+"""IM 渠道的抽象基类。"""
 
 from __future__ import annotations
 
@@ -12,16 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 class Channel(ABC):
-    """Base class for all IM channel implementations.
+    """所有 IM 渠道实现的基类。
 
-    Each channel connects to an external messaging platform and:
-    1. Receives messages, wraps them as InboundMessage, publishes to the bus.
-    2. Subscribes to outbound messages and sends replies back to the platform.
+    每个渠道连接到一个外部即时通讯平台，并负责：
+    1. 接收消息，将其包装为 ``InboundMessage`` 并发布到消息总线。
+    2. 订阅出站消息，将回复发送回对应平台。
 
-    Subclasses must implement ``start``, ``stop``, and ``send``.
+    子类必须实现 ``start``、``stop`` 和 ``send`` 方法。
     """
 
     def __init__(self, name: str, bus: MessageBus, config: dict[str, Any]) -> None:
+        """初始化渠道实例。
+
+        Args:
+            name: 渠道名称（例如 ``"feishu"``、``"slack"``），用于消息路由。
+            bus: ``MessageBus`` 实例，用于发布入站消息和订阅出站消息。
+            config: 渠道配置字典，具体字段由各子类解释。
+        """
         self.name = name
         self.bus = bus
         self.config = config
@@ -29,37 +36,46 @@ class Channel(ABC):
 
     @property
     def is_running(self) -> bool:
+        """是否已启动并正在运行。
+
+        Returns:
+            bool: 若 ``start()`` 已成功执行且未 ``stop()``，返回 ``True``。
+        """
         return self._running
 
     @property
     def supports_streaming(self) -> bool:
+        """是否支持增量（流式）出站更新。
+
+        Returns:
+            bool: 默认为 ``False``。支持流式的渠道（例如飞书、企业微信）需重写。
+        """
         return False
 
     # -- lifecycle ---------------------------------------------------------
 
     @abstractmethod
     async def start(self) -> None:
-        """Start listening for messages from the external platform."""
+        """启动渠道，开始监听来自外部平台的消息。"""
 
     @abstractmethod
     async def stop(self) -> None:
-        """Gracefully stop the channel."""
+        """优雅地停止渠道。"""
 
     # -- outbound ----------------------------------------------------------
 
     @abstractmethod
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message back to the external platform.
+        """将消息发送回外部平台。
 
-        The implementation should use ``msg.chat_id`` and ``msg.thread_ts``
-        to route the reply to the correct conversation/thread.
+        实现应使用 ``msg.chat_id`` 和 ``msg.thread_ts`` 将回复路由到正确的会话/主题。
         """
 
     async def send_file(self, msg: OutboundMessage, attachment: ResolvedAttachment) -> bool:
-        """Upload a single file attachment to the platform.
+        """将单个文件附件上传到平台。
 
-        Returns True if the upload succeeded, False otherwise.
-        Default implementation returns False (no file upload support).
+        Returns:
+            bool: 上传成功返回 ``True``，否则返回 ``False``。默认实现不支持文件上传，返回 ``False``。
         """
         return False
 
@@ -76,7 +92,20 @@ class Channel(ABC):
         files: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> InboundMessage:
-        """Convenience factory for creating InboundMessage instances."""
+        """便捷工厂方法：构造 ``InboundMessage`` 实例。
+
+        Args:
+            chat_id: 平台特定的会话标识。
+            user_id: 平台特定的用户标识。
+            text: 消息文本。
+            msg_type: 消息类型（普通聊天或命令），默认 ``CHAT``。
+            thread_ts: 可选的主题时间戳，用于在主题内回复。
+            files: 可选的文件附件元数据列表。
+            metadata: 任意附加元数据。
+
+        Returns:
+            InboundMessage: 构造好的入站消息实例。
+        """
         return InboundMessage(
             channel_name=self.name,
             chat_id=chat_id,
@@ -89,19 +118,17 @@ class Channel(ABC):
         )
 
     async def _on_outbound(self, msg: OutboundMessage) -> None:
-        """Outbound callback registered with the bus.
+        """注册到总线的出站回调。
 
-        Only forwards messages targeted at this channel.
-        Sends the text message first, then uploads any file attachments.
-        File uploads are skipped entirely when the text send fails to avoid
-        partial deliveries (files without accompanying text).
+        仅转发本渠道对应的消息。先发送文本，再上传文件附件。
+        若文本发送失败则完全跳过文件上传，避免出现“只发文件没有文本”的局部交付。
         """
         if msg.channel_name == self.name:
             try:
                 await self.send(msg)
             except Exception:
                 logger.exception("Failed to send outbound message on channel %s", self.name)
-                return  # Do not attempt file uploads when the text message failed
+                return  # 文本消息失败时不再尝试上传文件
 
             for attachment in msg.attachments:
                 try:
@@ -112,19 +139,17 @@ class Channel(ABC):
                     logger.exception("[%s] failed to upload file %s", self.name, attachment.filename)
 
     async def receive_file(self, msg: InboundMessage, thread_id: str) -> InboundMessage:
-        """
-        Optionally process and materialize inbound file attachments for this channel.
+        """可选地处理并落盘入站文件附件。
 
-        By default, this method does nothing and simply returns the original message.
-        Subclasses (e.g. FeishuChannel) may override this to download files (images, documents, etc)
-        referenced in msg.files, save them to the sandbox, and update msg.text to include
-        the sandbox file paths for downstream model consumption.
+        默认实现不做任何处理，直接返回原消息。子类（例如 ``FeishuChannel``）
+        可重写该方法以下载 ``msg.files`` 中引用的文件（图片、文档等），
+        将其保存到沙盒中，并更新 ``msg.text`` 加入沙盒文件路径，供下游模型使用。
 
         Args:
-            msg: The inbound message, possibly containing file metadata in msg.files.
-            thread_id: The resolved DeerFlow thread ID for sandbox path context.
+            msg: 入站消息，可能在 ``msg.files`` 中包含文件元数据。
+            thread_id: 已解析的 DeerFlow 主题 ID，用于沙盒路径上下文。
 
         Returns:
-            The (possibly modified) InboundMessage, with text and/or files updated as needed.
+            InboundMessage: 已被（可能）修改的入站消息，其 ``text`` 和/或 ``files`` 已更新。
         """
         return msg

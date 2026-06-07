@@ -1,3 +1,5 @@
+"""DeerFlow Agent 子包：导出 Lead Agent 工厂、运行时特性与线程状态类型。"""
+
 from .factory import create_deerflow_agent
 from .features import Next, Prev, RuntimeFeatures
 from .lead_agent import make_lead_agent

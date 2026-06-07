@@ -1,3 +1,5 @@
+"""Agent 工具装配入口:合并配置、内置、子 Agent、MCP、ACP 工具并去重。"""
+
 import logging
 
 from langchain.tools import BaseTool
@@ -24,7 +26,7 @@ SUBAGENT_TOOLS = [
 
 
 def _is_host_bash_tool(tool: object) -> bool:
-    """Return True if the tool config represents a host-bash execution surface."""
+    """判断工具配置是否表示主机 bash 执行面。"""
     group = getattr(tool, "group", None)
     use = getattr(tool, "use", None)
     if group == "bash":
@@ -35,7 +37,7 @@ def _is_host_bash_tool(tool: object) -> bool:
 
 
 def _ensure_sync_invocable_tool(tool: BaseTool) -> BaseTool:
-    """Attach a sync wrapper to async-only tools used by sync agent callers."""
+    """为仅含协程的工具附加同步包装,使同步 Agent 也能调用。"""
     if getattr(tool, "func", None) is None and getattr(tool, "coroutine", None) is not None:
         tool.func = make_sync_tool_wrapper(tool.coroutine, tool.name)
     return tool
@@ -49,19 +51,20 @@ def get_available_tools(
     *,
     app_config: AppConfig | None = None,
 ) -> list[BaseTool]:
-    """Get all available tools from config.
+    """从配置中收集并返回当前可用的工具列表。
 
-    Note: MCP tools should be initialized at application startup using
-    `initialize_mcp_tools()` from deerflow.mcp module.
+    注意:MCP 工具应在应用启动时通过 :mod:`deerflow.mcp` 中的
+    ``initialize_mcp_tools()`` 初始化,本函数只读取已缓存的结果。
 
     Args:
-        groups: Optional list of tool groups to filter by.
-        include_mcp: Whether to include tools from MCP servers (default: True).
-        model_name: Optional model name to determine if vision tools should be included.
-        subagent_enabled: Whether to include subagent tools (task, task_status).
+        groups: 可选的工具分组白名单,为 None 时包含所有分组。
+        include_mcp: 是否包含 MCP 服务器工具,默认 True。
+        model_name: 用于决定是否引入视觉相关工具的模型名。
+        subagent_enabled: 是否包含子 Agent 工具(task 等)。
+        app_config: 可选的应用配置对象,默认通过 :func:`get_app_config` 读取。
 
     Returns:
-        List of available tools.
+        排序后去重的 LangChain 工具列表。
     """
     config = app_config or get_app_config()
     tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]

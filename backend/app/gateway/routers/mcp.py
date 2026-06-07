@@ -1,3 +1,8 @@
+"""``/api/mcp`` 路由：读取与更新 ``extensions_config.json`` 中的 MCP 服务器配置。
+
+变更后会立刻通知运行时的 MCP 客户端缓存进行重新加载。
+"""
+
 import json
 import logging
 from pathlib import Path
@@ -13,7 +18,8 @@ router = APIRouter(prefix="/api", tags=["mcp"])
 
 
 class McpOAuthConfigResponse(BaseModel):
-    """OAuth configuration for an MCP server."""
+    """MCP 服务器的 OAuth 配置。"""
+
 
     enabled: bool = Field(default=True, description="Whether OAuth token injection is enabled")
     token_url: str = Field(default="", description="OAuth token endpoint URL")
@@ -32,7 +38,8 @@ class McpOAuthConfigResponse(BaseModel):
 
 
 class McpServerConfigResponse(BaseModel):
-    """Response model for MCP server configuration."""
+    """MCP 服务器配置的响应模型。"""
+
 
     enabled: bool = Field(default=True, description="Whether this MCP server is enabled")
     type: str = Field(default="stdio", description="Transport type: 'stdio', 'sse', or 'http'")
@@ -46,7 +53,8 @@ class McpServerConfigResponse(BaseModel):
 
 
 class McpConfigResponse(BaseModel):
-    """Response model for MCP configuration."""
+    """MCP 配置的响应模型。"""
+
 
     mcp_servers: dict[str, McpServerConfigResponse] = Field(
         default_factory=dict,
@@ -55,7 +63,8 @@ class McpConfigResponse(BaseModel):
 
 
 class McpConfigUpdateRequest(BaseModel):
-    """Request model for updating MCP configuration."""
+    """更新 MCP 配置的请求模型。"""
+
 
     mcp_servers: dict[str, McpServerConfigResponse] = Field(
         ...,
@@ -67,11 +76,11 @@ _MASKED_VALUE = "***"
 
 
 def _mask_server_config(server: McpServerConfigResponse) -> McpServerConfigResponse:
-    """Return a copy of server config with sensitive fields masked.
-
-    Masks env values, header values, and removes OAuth secrets so they
-    are not exposed through the GET API endpoint.
+    """返回服务器配置的副本，并对敏感字段进行掩码。
+    
+            对 env 值、header 值进行掩码，并移除 OAuth 密钥，避免向客户端泄露。
     """
+
     masked_env = {k: _MASKED_VALUE for k in server.env}
     masked_headers = {k: _MASKED_VALUE for k in server.headers}
     masked_oauth = None
@@ -95,21 +104,12 @@ def _merge_preserving_secrets(
     incoming: McpServerConfigResponse,
     existing: McpServerConfigResponse,
 ) -> McpServerConfigResponse:
-    """Merge incoming config with existing, preserving secrets masked by GET.
-
-    When the frontend toggles ``enabled`` it round-trips the full config:
-    GET (masked) → modify enabled → PUT (masked values sent back).
-    This function ensures masked values (``***``) are replaced with the
-    real secrets from the current on-disk config.
-
-    ``***`` is only accepted for keys that already exist in *existing*.
-    New keys must provide a real value.
-
-    For OAuth secrets, ``None`` means "preserve the existing stored value"
-    so masked GET responses can be safely round-tripped. To explicitly clear
-    a stored secret, clients may send an empty string, which is converted
-    to ``None`` before persisting.
+    """合并新配置与旧配置，保留被 GET 掩码的密钥。
+    
+            当前端切换 ``enabled`` 时会回传完整配置：被 GET 掩码的密钥返回为 ``***``；
+            合并逻辑必须保留已有真实值，而不是用掩码占位符覆盖。
     """
+
     merged_env = {}
     for k, v in incoming.env.items():
         if v == _MASKED_VALUE:
@@ -163,26 +163,19 @@ def _merge_preserving_secrets(
     description="Retrieve the current Model Context Protocol (MCP) server configurations.",
 )
 async def get_mcp_configuration() -> McpConfigResponse:
-    """Get the current MCP configuration.
-
-    Returns:
-        The current MCP configuration with all servers.
-
-    Example:
-        ```json
-        {
-            "mcp_servers": {
+    """获取当前 MCP 配置。
+    
+        Returns:
+            包含所有服务器的当前 MCP 配置。
+    
+        Example:
+            ```json
+            {
+              "mcp_servers": {
                 "github": {
-                    "enabled": true,
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_TOKEN": "***"},
-                    "description": "GitHub MCP server for repository operations"
-                }
-            }
-        }
-        ```
+                  "enabled": true,
     """
+
     config = get_extensions_config()
 
     servers = {name: _mask_server_config(McpServerConfigResponse(**server.model_dump())) for name, server in config.mcp_servers.items()}
@@ -196,37 +189,14 @@ async def get_mcp_configuration() -> McpConfigResponse:
     description="Update Model Context Protocol (MCP) server configurations and save to file.",
 )
 async def update_mcp_configuration(request: McpConfigUpdateRequest) -> McpConfigResponse:
-    """Update the MCP configuration.
-
-    This will:
-    1. Save the new configuration to the mcp_config.json file
-    2. Reload the configuration cache
-    3. Reset MCP tools cache to trigger reinitialization
-
-    Args:
-        request: The new MCP configuration to save.
-
-    Returns:
-        The updated MCP configuration.
-
-    Raises:
-        HTTPException: 500 if the configuration file cannot be written.
-
-    Example Request:
-        ```json
-        {
-            "mcp_servers": {
-                "github": {
-                    "enabled": true,
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_TOKEN": "$GITHUB_TOKEN"},
-                    "description": "GitHub MCP server for repository operations"
-                }
-            }
-        }
-        ```
+    """更新 MCP 配置。
+    
+            该操作将：
+            1. 将新配置保存到 ``mcp_config.json`` 文件
+            2. 重新加载配置缓存
+            3. 在后台触发 MCP 重新初始化
     """
+
     try:
         # Get the current config path (or determine where to save it)
         config_path = ExtensionsConfig.resolve_config_path()

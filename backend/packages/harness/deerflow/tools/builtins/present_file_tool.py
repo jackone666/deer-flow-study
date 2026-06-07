@@ -1,3 +1,5 @@
+"""present_files 工具:把生成的文件暴露给前端用户进行查看与渲染。"""
+
 from pathlib import Path
 from typing import Annotated
 
@@ -14,7 +16,7 @@ OUTPUTS_VIRTUAL_PREFIX = f"{VIRTUAL_PATH_PREFIX}/outputs"
 
 
 def _get_thread_id(runtime: Runtime) -> str | None:
-    """Resolve the current thread id from runtime context or RunnableConfig."""
+    """从 runtime context 或 RunnableConfig 解析当前 thread_id。"""
     thread_id = runtime.context.get("thread_id") if runtime.context else None
     if thread_id:
         return thread_id
@@ -34,19 +36,22 @@ def _normalize_presented_filepath(
     runtime: Runtime,
     filepath: str,
 ) -> str:
-    """Normalize a presented file path to the `/mnt/user-data/outputs/*` contract.
+    """把呈现文件路径归一化为 ``/mnt/user-data/outputs/*`` 形式。
 
-    Accepts either:
-    - A virtual sandbox path such as `/mnt/user-data/outputs/report.md`
-    - A host-side thread outputs path such as
-      `/app/backend/.deer-flow/threads/<thread>/user-data/outputs/report.md`
+    支持以下两种入参:
+    - 虚拟沙箱路径,如 ``/mnt/user-data/outputs/report.md``
+    - 主机端线程输出目录路径,如
+      ``/app/backend/.deer-flow/threads/<thread>/user-data/outputs/report.md``
+
+    Args:
+        runtime: 工具运行时,用于解析当前线程的输出目录。
+        filepath: 用户提供的文件路径。
 
     Returns:
-        The normalized virtual path.
+        归一化后的虚拟路径。
 
     Raises:
-        ValueError: If runtime metadata is missing or the path is outside the
-            current thread's outputs directory.
+        ValueError: runtime 元数据缺失或路径不在当前线程的 outputs 目录内。
     """
     if runtime.state is None:
         raise ValueError("Thread runtime state is not available")
@@ -86,24 +91,24 @@ def present_file_tool(
     filepaths: list[str],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """Make files visible to the user for viewing and rendering in the client interface.
+    """把文件展示给用户,在客户端界面查看与渲染。
 
-    When to use the present_files tool:
+    使用时机:
 
-    - Making any file available for the user to view, download, or interact with
-    - Presenting multiple related files at once
-    - After creating files that should be presented to the user
+    - 把文件提供给用户查看、下载或交互
+    - 一次性呈现多个相关文件
+    - 在生成应当展示给用户的文件后
 
-    When NOT to use the present_files tool:
-    - When you only need to read file contents for your own processing
-    - For temporary or intermediate files not meant for user viewing
+    不应使用本工具的情况:
+    - 只是为了自己处理而读取文件内容
+    - 临时或中间文件,不需要让用户看到
 
-    Notes:
-    - You should call this tool after creating files and moving them to the `/mnt/user-data/outputs` directory.
-    - This tool can be safely called in parallel with other tools. State updates are handled by a reducer to prevent conflicts.
+    注意:
+    - 在创建文件并移动到 ``/mnt/user-data/outputs`` 后调用本工具。
+    - 本工具可与其他工具安全并发调用;状态更新由 reducer 合并去重。
 
     Args:
-        filepaths: List of absolute file paths to present to the user. **Only** files in `/mnt/user-data/outputs` can be presented.
+        filepaths: 待呈现给用户的文件绝对路径列表,**只接受** ``/mnt/user-data/outputs`` 下的文件。
     """
     try:
         normalized_paths = [_normalize_presented_filepath(runtime, filepath) for filepath in filepaths]

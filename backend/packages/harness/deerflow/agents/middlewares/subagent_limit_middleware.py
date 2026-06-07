@@ -1,4 +1,5 @@
-"""Middleware to enforce maximum concurrent subagent tool calls per model response."""
+"""限制每个模型响应中并发 subagent 工具调用数量的中间件。"""
+
 
 import logging
 from typing import override
@@ -18,27 +19,29 @@ MAX_SUBAGENT_LIMIT = 4
 
 
 def _clamp_subagent_limit(value: int) -> int:
-    """Clamp subagent limit to valid range [2, 4]."""
+    """将子代理上限裁剪到合法范围 ``[2, 4]``。"""
     return max(MIN_SUBAGENT_LIMIT, min(MAX_SUBAGENT_LIMIT, value))
 
 
 class SubagentLimitMiddleware(AgentMiddleware[AgentState]):
-    """Truncates excess 'task' tool calls from a single model response.
+    """截断单次模型响应中超出上限的 ``task`` 工具调用。
 
-    When an LLM generates more than max_concurrent parallel task tool calls
-    in one response, this middleware keeps only the first max_concurrent and
-    discards the rest. This is more reliable than prompt-based limits.
+    当 LLM 在一次响应中生成超过 ``max_concurrent`` 个并行的 ``task`` 调用时，
+    该中间件只保留前 ``max_concurrent`` 个、丢弃其余。这比基于 Prompt 的限制
+    更加可靠。
 
     Args:
-        max_concurrent: Maximum number of concurrent subagent calls allowed.
-            Defaults to MAX_CONCURRENT_SUBAGENTS (3). Clamped to [2, 4].
+        max_concurrent: 允许的最大并发子代理调用数，默认
+            ``MAX_CONCURRENT_SUBAGENTS``（3），会被裁剪到 ``[2, 4]``。
     """
 
     def __init__(self, max_concurrent: int = MAX_CONCURRENT_SUBAGENTS):
+        """初始化中间件，裁剪 *max_concurrent* 到合法范围。"""
         super().__init__()
         self.max_concurrent = _clamp_subagent_limit(max_concurrent)
 
     def _truncate_task_calls(self, state: AgentState) -> dict | None:
+        """截断最后一次 AIMessage 中超出上限的 ``task`` 调用。"""
         messages = state.get("messages", [])
         if not messages:
             return None
@@ -69,8 +72,10 @@ class SubagentLimitMiddleware(AgentMiddleware[AgentState]):
 
     @override
     def after_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用后同步钩子。"""
         return self._truncate_task_calls(state)
 
     @override
     async def aafter_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用后异步钩子。"""
         return self._truncate_task_calls(state)

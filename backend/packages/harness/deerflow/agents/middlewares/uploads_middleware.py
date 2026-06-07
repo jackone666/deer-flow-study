@@ -1,4 +1,5 @@
-"""Middleware to inject uploaded files information into agent context."""
+"""将上传文件信息注入到 agent 上下文中的中间件。"""
+
 
 import logging
 from pathlib import Path
@@ -21,18 +22,16 @@ _OUTLINE_PREVIEW_LINES = 5
 
 
 def _extract_outline_for_file(file_path: Path) -> tuple[list[dict], list[str]]:
-    """Return the document outline and fallback preview for *file_path*.
+    """返回 *file_path* 对应文档的大纲与回退预览。
 
-    Looks for a sibling ``<stem>.md`` file produced by the upload conversion
-    pipeline.
+    查找由上传转换流程生成的同目录 ``<stem>.md`` 文件。
 
     Returns:
-        (outline, preview) where:
-        - outline: list of ``{title, line}`` dicts (plus optional sentinel).
-          Empty when no headings are found or no .md exists.
-        - preview: first few non-empty lines of the .md, used as a content
-          anchor when outline is empty so the agent has some context.
-          Empty when outline is non-empty (no fallback needed).
+        ``(outline, preview)`` 元组：
+        - ``outline``：``{title, line}`` 字典列表（可能含截断哨兵）。
+          当没有找到标题或不存在 ``.md`` 时为空。
+        - ``preview``：``outline`` 为空时取 ``.md`` 开头若干非空行作为
+          内容锚点供模型参考；``outline`` 非空时为空（无需回退）。
     """
     md_path = file_path.with_suffix(".md")
     if not md_path.is_file():
@@ -59,32 +58,32 @@ def _extract_outline_for_file(file_path: Path) -> tuple[list[dict], list[str]]:
 
 
 class UploadsMiddlewareState(AgentState):
-    """State schema for uploads middleware."""
+    """Uploads 中间件对应的状态模式。"""
 
     uploaded_files: NotRequired[list[dict] | None]
 
 
 class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
-    """Middleware to inject uploaded files information into the agent context.
+    """将已上传文件信息注入到 Agent 上下文的中间件。
 
-    Reads file metadata from the current message's additional_kwargs.files
-    (set by the frontend after upload) and prepends an <uploaded_files> block
-    to the last human message so the model knows which files are available.
+    从当前消息的 ``additional_kwargs.files``（前端上传后写入）读取文件
+    元数据，并在最后一条人类消息前添加 ``<uploaded_files>`` 块，让模型
+    知晓可用文件。
     """
 
     state_schema = UploadsMiddlewareState
 
     def __init__(self, base_dir: str | None = None):
-        """Initialize the middleware.
+        """初始化中间件。
 
         Args:
-            base_dir: Base directory for thread data. Defaults to Paths resolution.
+            base_dir: 线程数据根目录，缺省时使用 ``Paths`` 解析得到的路径。
         """
         super().__init__()
         self._paths = Paths(base_dir) if base_dir else get_paths()
 
     def _format_file_entry(self, file: dict, lines: list[str]) -> None:
-        """Append a single file entry (name, size, path, optional outline) to lines."""
+        """向 *lines* 追加单个文件条目（名称、大小、路径、可选大纲）。"""
         size_kb = file["size"] / 1024
         size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
         lines.append(f"- {file['filename']} ({size_str})")
@@ -108,17 +107,18 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         lines.append("")
 
     def _create_files_message(self, new_files: list[dict], historical_files: list[dict]) -> str:
-        """Create a formatted message listing uploaded files.
-
-        Args:
-            new_files: Files uploaded in the current message.
-            historical_files: Files uploaded in previous messages.
-                Each file dict may contain an optional ``outline`` key — a list of
-                ``{title, line}`` dicts extracted from the converted Markdown file.
-
-        Returns:
-            Formatted string inside <uploaded_files> tags.
+        """创建一条列出上传文件的格式化消息。
+        
+                Args:
+                    new_files: 当前消息中上传的文件。
+                    historical_files: 历史消息中上传的文件。
+                        每个文件 dict 可包含可选的 ``outline`` 键——
+                        来自已转换 Markdown 文件的 ``{title, line}`` 字典列表。
+        
+                Returns:
+                    包裹在 ``<uploaded_files>`` 标签内的格式化字符串。
         """
+
         lines = ["<uploaded_files>"]
 
         lines.append("The following files were uploaded in this message:")
@@ -148,20 +148,20 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         return "\n".join(lines)
 
     def _files_from_kwargs(self, message: HumanMessage, uploads_dir: Path | None = None) -> list[dict] | None:
-        """Extract file info from message additional_kwargs.files.
-
-        The frontend sends uploaded file metadata in additional_kwargs.files
-        after a successful upload. Each entry has: filename, size (bytes),
-        path (virtual path), status.
-
-        Args:
-            message: The human message to inspect.
-            uploads_dir: Physical uploads directory used to verify file existence.
-                         When provided, entries whose files no longer exist are skipped.
-
-        Returns:
-            List of file dicts with virtual paths, or None if the field is absent or empty.
+        """从消息的 ``additional_kwargs.files`` 中提取文件信息。
+        
+            前端在上传成功后将文件元数据放在 ``additional_kwargs.files`` 中。
+            每个条目包含：``filename``、``size``（字节）、``path``（虚拟路径）、``status``。
+        
+                Args:
+                    message: 要检查的人类消息。
+                    uploads_dir: 用于校验文件是否存在的物理 uploads 目录。
+                        若提供，则对应文件已不存在的条目会被跳过。
+        
+                Returns:
+                    包含虚拟路径的文件 dict 列表；若该字段缺失或为空则返回 ``None``。
         """
+
         kwargs_files = (message.additional_kwargs or {}).get("files")
         if not isinstance(kwargs_files, list) or not kwargs_files:
             return None
@@ -187,23 +187,21 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
 
     @override
     def before_agent(self, state: UploadsMiddlewareState, runtime: Runtime) -> dict | None:
-        """Inject uploaded files information before agent execution.
-
-        New files come from the current message's additional_kwargs.files.
-        Historical files are scanned from the thread's uploads directory,
-        excluding the new ones.
-
-        Prepends <uploaded_files> context to the last human message content.
-        The original additional_kwargs (including files metadata) is preserved
-        on the updated message so the frontend can read it from the stream.
-
-        Args:
-            state: Current agent state.
-            runtime: Runtime context containing thread_id.
-
-        Returns:
-            State updates including uploaded files list.
+        """在 agent 执行前注入上传文件信息。
+        
+            新文件来自当前消息的 ``additional_kwargs.files``。历史文件从线程的 uploads 目录中扫描，
+            排除新文件。会在最后一条人类消息内容前添加 ``<uploaded_files>`` 上下文。
+            原始 ``additional_kwargs``（含 files 元数据）会保留在更新后的消息上，
+            以便前端从流中读取。
+        
+                Args:
+                    state: 当前 agent 状态。
+                    runtime: 包含 ``thread_id`` 的运行时上下文。
+        
+                Returns:
+                    包含上传文件列表的状态更新。
         """
+
         messages = list(state.get("messages", []))
         if not messages:
             return None
@@ -297,13 +295,13 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
 
     @override
     async def abefore_agent(self, state: UploadsMiddlewareState, runtime: Runtime) -> dict | None:
-        """Async hook that offloads the synchronous uploads scan off the event loop.
-
-        ``before_agent`` performs blocking filesystem IO (directory enumeration,
-        ``stat``, reading sibling ``.md`` outlines). When the graph runs async,
-        langgraph would otherwise execute the sync hook directly on the event
-        loop, so it is dispatched to a worker thread via ``run_in_executor``.
-        ``run_in_executor`` copies the current context, so the ``user_id``
-        contextvar read by ``get_effective_user_id()`` is preserved.
+        """将同步的 uploads 扫描移出事件循环的异步钩子。
+        
+            ``before_agent`` 会执行阻塞的文件系统 IO（目录枚举、``stat``、读取同级 ``.md`` 摘要）。
+            当图以异步方式运行时，langgraph 默认会直接在事件循环上执行同步钩子，
+            因此这里通过 ``run_in_executor`` 将其分派到工作线程。
+            ``run_in_executor`` 会复制当前 context，因此 ``get_effective_user_id()`` 读取的
+            ``user_id`` contextvar 会被保留。
         """
+
         return await run_in_executor(None, self.before_agent, state, runtime)

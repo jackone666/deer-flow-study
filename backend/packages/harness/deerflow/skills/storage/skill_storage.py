@@ -1,4 +1,4 @@
-"""Abstract SkillStorage base class with template-method flows."""
+"""抽象 :class:`SkillStorage` 基类,提供模板方法流程。"""
 
 from __future__ import annotations
 
@@ -16,15 +16,18 @@ _SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class SkillStorage(ABC):
-    """Abstract base for skill storage backends.
+    """技能存储后端的抽象基类。
 
-    Subclasses implement a small set of storage-medium-specific atomic
-    operations; this base class provides final template-method flows
-    (load_skills, history serialisation, path helpers, validation) that
-    compose them with protocol-level helpers.
+    子类实现一组与存储介质相关的原子操作;本基类提供模板方法流程
+    (load_skills、历史记录序列化、路径辅助、校验)以组合协议层辅助函数。
     """
 
     def __init__(self, container_path: str = "/mnt/skills") -> None:
+        """初始化存储基类。
+
+        Args:
+            container_path: 容器中 skills 的挂载根路径,默认 ``/mnt/skills``。
+        """
         self._container_root = container_path
 
     # ------------------------------------------------------------------
@@ -33,7 +36,11 @@ class SkillStorage(ABC):
 
     @staticmethod
     def validate_skill_name(name: str) -> str:
-        """Validate and normalise a skill name; return the normalised form."""
+        """校验并规范化技能名,返回规范化后的形式。
+
+        Raises:
+            ValueError: 名称格式不合法或超过 64 字符。
+        """
         normalized = name.strip()
         if not _SKILL_NAME_PATTERN.fullmatch(normalized):
             raise ValueError("Skill name must be hyphen-case using lowercase letters, digits, and hyphens only.")
@@ -43,11 +50,17 @@ class SkillStorage(ABC):
 
     @staticmethod
     def validate_relative_path(relative_path: str, base_dir: Path) -> Path:
-        """Validate *relative_path* against *base_dir* and return the resolved target.
+        """校验 ``relative_path`` 相对于 ``base_dir`` 的安全位置,返回解析后的目标。
 
-        Checks that *relative_path* is non-empty, then joins it with *base_dir*
-        and resolves the result (following symlinks).  Raises ``ValueError`` if
-        the resolved target does not lie within *base_dir*.
+        Args:
+            relative_path: 相对路径字符串,必须非空。
+            base_dir: 基目录,目标须落在其下。
+
+        Returns:
+            解析后的绝对路径。
+
+        Raises:
+            ValueError: 路径为空或解析后不在 ``base_dir`` 之内。
         """
         if not relative_path:
             raise ValueError("relative_path must not be empty.")
@@ -61,7 +74,15 @@ class SkillStorage(ABC):
 
     @staticmethod
     def validate_skill_markdown_content(name: str, content: str) -> None:
-        """Validate SKILL.md content: parse frontmatter and check name matches."""
+        """校验 SKILL.md 内容:解析 frontmatter 并确认 name 字段一致。
+
+        Args:
+            name: 期望的技能名。
+            content: 完整的 SKILL.md 内容。
+
+        Raises:
+            ValueError: 解析失败或 frontmatter 中的 name 与 ``name`` 不一致。
+        """
         import tempfile
 
         from deerflow.skills.validation import _validate_skill_frontmatter
@@ -77,7 +98,18 @@ class SkillStorage(ABC):
                 raise ValueError(f"Frontmatter name '{parsed_name}' must match requested skill name '{name}'.")
 
     def ensure_safe_support_path(self, name: str, relative_path: str) -> Path:
-        """Validate and return the resolved absolute path for a support file."""
+        """校验并返回技能支持文件的解析后绝对路径。
+
+        Args:
+            name: 技能名(连字符形式)。
+            relative_path: 相对支持文件路径。
+
+        Returns:
+            已校验的绝对路径。
+
+        Raises:
+            ValueError: 路径为空、绝对、含穿越段或越出允许的支持子目录。
+        """
         _ALLOWED_SUPPORT_SUBDIRS = {"references", "templates", "scripts", "assets"}
         skill_dir = self.get_custom_skill_dir(self.validate_skill_name(name)).resolve()
         if not relative_path or relative_path.endswith("/"):
@@ -104,104 +136,70 @@ class SkillStorage(ABC):
 
     @abstractmethod
     def get_skills_root_path(self) -> Path:
-        """Absolute host path to the skills root, used for sandbox mounts.
-
-        Origin: ``deerflow.skills.loader.get_skills_root_path``.
-        """
+        """技能根目录的主机绝对路径,用于沙箱挂载。"""
 
     @abstractmethod
     def _iter_skill_files(self) -> Iterable[tuple[SkillCategory, Path, Path]]:
-        """Yield ``(category, category_root, skill_md_path)`` for every SKILL.md.
-
-        Origin: extracted from directory-walk logic inside
-        ``deerflow.skills.loader.load_skills``.
-        """
+        """为每个 SKILL.md 产出 ``(分类, 分类根目录, SKILL.md 路径)`` 三元组。"""
 
     @abstractmethod
     def read_custom_skill(self, name: str) -> str:
-        """Read SKILL.md content for a custom skill.
-
-        Origin: ``deerflow.skills.manager.read_custom_skill_content``.
-        """
+        """读取自定义技能 SKILL.md 的内容。"""
 
     @abstractmethod
     def write_custom_skill(self, name: str, relative_path: str, content: str) -> None:
-        """Atomically write a text file under ``custom/<name>/<relative_path>``.
-
-        Origin: ``deerflow.skills.manager.atomic_write``.
-        """
+        """原子地把文本写入 ``custom/<name>/<relative_path>``。"""
 
     @abstractmethod
     async def ainstall_skill_from_archive(self, archive_path: str | Path) -> dict:
-        """Async install of a skill from a ``.skill`` ZIP archive.
-
-        Origin: ``deerflow.skills.installer.ainstall_skill_from_archive``.
-        """
+        """从 ``.skill`` ZIP 压缩包异步安装一个技能。"""
 
     def install_skill_from_archive(self, archive_path: str | Path) -> dict:
-        """Sync wrapper — delegates to :meth:`ainstall_skill_from_archive`."""
+        """同步包装,内部委托给 :meth:`ainstall_skill_from_archive`。"""
         from deerflow.skills.installer import _run_async_install
 
         return _run_async_install(self.ainstall_skill_from_archive(archive_path))
 
     @abstractmethod
     def delete_custom_skill(self, name: str, *, history_meta: dict | None = None) -> None:
-        """Delete a custom skill (validation + optional history + directory removal).
-
-        Origin: ``app.gateway.routers.skills.delete_custom_skill`` + ``skill_manage_tool``.
-        """
+        """删除自定义技能(校验 + 可选历史 + 目录清理)。"""
 
     @abstractmethod
     def custom_skill_exists(self, name: str) -> bool:
-        """Origin: ``deerflow.skills.manager.custom_skill_exists``."""
+        """判断自定义技能是否存在。"""
 
     @abstractmethod
     def public_skill_exists(self, name: str) -> bool:
-        """Origin: ``deerflow.skills.manager.public_skill_exists``."""
+        """判断公开(内置)技能是否存在。"""
 
     @abstractmethod
     def append_history(self, name: str, record: dict) -> None:
-        """Append a JSONL history entry for ``name``.
-
-        Origin: ``deerflow.skills.manager.append_history``.
-        """
+        """为 ``name`` 追加一条 JSONL 历史记录。"""
 
     @abstractmethod
     def read_history(self, name: str) -> list[dict]:
-        """Return all history records for ``name``, oldest first.
-
-        Origin: ``deerflow.skills.manager.read_history``.
-        """
+        """按时间顺序返回 ``name`` 的全部历史记录。"""
 
     # ------------------------------------------------------------------
     # Concrete path helpers (layout is part of the SKILL.md protocol)
     # ------------------------------------------------------------------
 
     def get_container_root(self) -> str:
-        """Origin: ``deerflow.config.skills_config.SkillsConfig.container_path`` accessor."""
+        """返回容器中 skills 挂载根路径。"""
         return self._container_root
 
     def get_custom_skill_dir(self, name: str) -> Path:
-        """Path to ``custom/<name>``. Does not create the directory.
-
-        Origin: ``deerflow.skills.manager.get_custom_skill_dir``.
-        """
+        """``custom/<name>`` 的路径,不会自动创建目录。"""
         normalized_name = self.validate_skill_name(name)
         return self.get_skills_root_path() / SkillCategory.CUSTOM.value / normalized_name
 
     def get_custom_skill_file(self, name: str) -> Path:
-        """Path to ``custom/<name>/SKILL.md``.
-
-        Origin: ``deerflow.skills.manager.get_custom_skill_file``.
-        """
+        """``custom/<name>/SKILL.md`` 的路径。"""
         normalized_name = self.validate_skill_name(name)
         return self.get_custom_skill_dir(normalized_name) / SKILL_MD_FILE
 
     def get_skill_history_file(self, name: str) -> Path:
-        """Path to ``custom/.history/<name>.jsonl``. Does not create parents.
-
-        Origin: ``deerflow.skills.manager.get_skill_history_file``.
-        """
+        """``custom/.history/<name>.jsonl`` 的路径,不会自动创建父目录。"""
         normalized_name = self.validate_skill_name(name)
         return self.get_skills_root_path() / SkillCategory.CUSTOM.value / ".history" / f"{normalized_name}.jsonl"
 
@@ -210,9 +208,13 @@ class SkillStorage(ABC):
     # ------------------------------------------------------------------
 
     def load_skills(self, *, enabled_only: bool = False) -> list[Skill]:
-        """Discover all skills, merge enabled state, sort and optionally filter.
+        """发现所有技能,合并启用状态,排序并按需过滤。
 
-        Origin: ``deerflow.skills.loader.load_skills``.
+        Args:
+            enabled_only: 为 True 时仅保留启用的技能。
+
+        Returns:
+            排序后的 :class:`Skill` 列表。
         """
         from deerflow.skills.parser import parse_skill_file
 
@@ -246,7 +248,7 @@ class SkillStorage(ABC):
         return skills
 
     def ensure_custom_skill_is_editable(self, name: str) -> None:
-        """Origin: ``deerflow.skills.manager.ensure_custom_skill_is_editable``."""
+        """确保 ``name`` 指向一个可编辑的自定义技能,否则抛出。"""
         if self.custom_skill_exists(name):
             return
         if self.public_skill_exists(name):

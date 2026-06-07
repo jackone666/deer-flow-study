@@ -1,18 +1,17 @@
-"""Sync checkpointer factory.
+"""同步 Checkpointer 工厂。
 
-Provides a **sync singleton** and a **sync context manager** for LangGraph
-graph compilation and CLI tools.
+为 LangGraph 图编译与 CLI 工具提供 **同步单例** 与 **同步上下文管理器**。
 
-Supported backends: memory, sqlite, postgres.
+支持的后端：memory、sqlite、postgres。
 
-Usage::
+使用示例::
 
     from deerflow.runtime.checkpointer.provider import get_checkpointer, checkpointer_context
 
-    # Singleton — reused across calls, closed on process exit
+    # 单例——跨调用复用，进程退出时关闭
     cp = get_checkpointer()
 
-    # One-shot — fresh connection, closed on block exit
+    # 一次性——新建连接，离开 ``with`` 块时关闭
     with checkpointer_context() as cp:
         graph.invoke(input, config={"configurable": {"thread_id": "1"}})
 """
@@ -48,12 +47,11 @@ POSTGRES_CONN_REQUIRED = "checkpointer.connection_string is required for the pos
 
 @contextlib.contextmanager
 def _sync_checkpointer_cm(config: CheckpointerConfig) -> Iterator[Checkpointer]:
-    """Context manager that creates and tears down a sync checkpointer.
+    """创建并销毁同步 checkpointer 的上下文管理器。
 
-    Returns a configured ``Checkpointer`` instance. Resource cleanup for any
-    underlying connections or pools is handled by higher-level helpers in
-    this module (such as the singleton factory or context manager); this
-    function does not return a separate cleanup callback.
+    返回已配置的 ``Checkpointer`` 实例。底层连接或连接池的资源清理由
+    本模块的更上层辅助函数（如单例工厂或上下文管理器）负责；本函数
+    不再单独返回清理回调。
     """
     if config.type == "memory":
         from langgraph.checkpoint.memory import InMemorySaver
@@ -103,13 +101,13 @@ _checkpointer_ctx = None  # open context manager keeping the connection alive
 
 
 def get_checkpointer() -> Checkpointer:
-    """Return the global sync checkpointer singleton, creating it on first call.
+    """返回全局同步 checkpointer 单例，首次调用时创建。
 
-    Returns an ``InMemorySaver`` when no checkpointer is configured in *config.yaml*.
+    当 *config.yaml* 未配置 checkpointer 时返回 ``InMemorySaver``。
 
     Raises:
-        ImportError: If the required package for the configured backend is not installed.
-        ValueError: If ``connection_string`` is missing for a backend that requires it.
+        ImportError: 当所选后端所需的依赖包未安装时抛出。
+        ValueError: 当需要 ``connection_string`` 的后端未提供该字段时抛出。
     """
     global _checkpointer, _checkpointer_ctx
 
@@ -149,10 +147,9 @@ def get_checkpointer() -> Checkpointer:
 
 
 def reset_checkpointer() -> None:
-    """Reset the sync singleton, forcing recreation on the next call.
+    """重置同步单例，强制下一次调用时重新创建。
 
-    Closes any open backend connections and clears the cached instance.
-    Useful in tests or after a configuration change.
+    关闭任何已打开的后端连接并清除缓存的实例。便于测试或配置变更后使用。
     """
     global _checkpointer, _checkpointer_ctx
     if _checkpointer_ctx is not None:
@@ -171,16 +168,15 @@ def reset_checkpointer() -> None:
 
 @contextlib.contextmanager
 def checkpointer_context() -> Iterator[Checkpointer]:
-    """Sync context manager that yields a checkpointer and cleans up on exit.
+    """产出 checkpointer 并在退出时清理的同步上下文管理器。
 
-    Unlike :func:`get_checkpointer`, this does **not** cache the instance —
-    each ``with`` block creates and destroys its own connection.  Use it in
-    CLI scripts or tests where you want deterministic cleanup::
+    与 :func:`get_checkpointer` 不同，**不会**缓存实例——每个 ``with`` 块
+    都会创建并销毁自己的连接。适用于需要确定性清理的 CLI 脚本或测试::
 
         with checkpointer_context() as cp:
             graph.invoke(input, config={"configurable": {"thread_id": "1"}})
 
-    Yields an ``InMemorySaver`` when no checkpointer is configured in *config.yaml*.
+    当 *config.yaml* 未配置 checkpointer 时产出 ``InMemorySaver``。
     """
 
     config = get_app_config()

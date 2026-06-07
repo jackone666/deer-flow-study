@@ -1,30 +1,10 @@
-"""Middleware to inject dynamic context (memory, current date) as a system-reminder.
+"""用于注入动态上下文（记忆、当前日期）作为系统提醒的中间件。
 
-The system prompt is kept fully static for maximum prefix-cache reuse across users
-and sessions.  The current date is always injected.  Per-user memory is also injected
-when ``memory.injection_enabled`` is True in the app config.  Both are delivered once
-per conversation as a dedicated <system-reminder> HumanMessage inserted before the
-first user message (frozen-snapshot pattern).
-
-When a conversation spans midnight the middleware detects the date change and injects
-a lightweight date-update reminder as a separate HumanMessage before the current turn.
-This correction is persisted so subsequent turns on the new day see a consistent history
-and do not re-inject.
-
-Reminder format:
-
-    <system-reminder>
-    <memory>...</memory>
-
-    <current_date>2026-05-08, Friday</current_date>
-    </system-reminder>
-
-Date-update format:
-
-    <system-reminder>
-    <current_date>2026-05-09, Saturday</current_date>
-    </system-reminder>
+    系统提示保持完全静态，以最大化跨用户/跨会话的前缀缓存复用。
+    当前日期始终会被注入。当 ``AppConfig`` 中 ``memory.injection_enabled``
+    为 True 时，按用户维度的记忆也会被注入。
 """
+
 
 from __future__ import annotations
 
@@ -49,22 +29,21 @@ _SUMMARY_MESSAGE_NAME = "summary"
 
 
 def _extract_date(content: str) -> str | None:
-    """Return the first <current_date> value found in *content*, or None."""
+    """从 *content* 中返回第一个 ``<current_date>`` 标签值，未找到时返回 ``None``。"""
     m = _DATE_RE.search(content)
     return m.group(1) if m else None
 
 
 def is_dynamic_context_reminder(message: object) -> bool:
-    """Return whether *message* is a hidden dynamic-context reminder."""
+    """判断 *message* 是否为隐藏的动态上下文提醒消息。"""
     return isinstance(message, HumanMessage) and bool(message.additional_kwargs.get(_DYNAMIC_CONTEXT_REMINDER_KEY))
 
 
 def _last_injected_date(messages: list) -> str | None:
-    """Scan messages in reverse and return the most recently injected date.
+    """反向扫描消息列表，返回最近一次注入的日期。
 
-    Detection uses the ``dynamic_context_reminder`` additional_kwargs flag rather
-    than content substring matching, so user messages containing ``<system-reminder>``
-    are not mistakenly treated as injected reminders.
+    通过 ``dynamic_context_reminder`` 标记位而非内容子串匹配来判断，
+    以避免将包含 ``<system-reminder>`` 字面量的用户消息误识别为注入的提醒。
     """
     for msg in reversed(messages):
         if is_dynamic_context_reminder(msg):
@@ -74,34 +53,39 @@ def _last_injected_date(messages: list) -> str | None:
 
 
 def _is_user_injection_target(message: object) -> bool:
-    """Return whether *message* can receive a dynamic-context reminder."""
+    """判断 *message* 是否可作为动态上下文提醒的注入目标。"""
     return isinstance(message, HumanMessage) and not is_dynamic_context_reminder(message) and message.name != _SUMMARY_MESSAGE_NAME
 
 
 class DynamicContextMiddleware(AgentMiddleware):
-    """Inject memory and current date into HumanMessages as a <system-reminder>.
+    """以 ``<system-reminder>`` 形式向 HumanMessage 注入记忆与当前日期。
 
-    First turn
+    首轮
     ----------
-    Prepends a full system-reminder (memory + date) to the first HumanMessage and
-    persists it (same message ID).  The first message is then frozen for the whole
-    session — its content never changes again, so the prefix cache can hit on every
-    subsequent turn.
+    将完整的 ``<system-reminder>``（包含记忆与日期）插入到首条 ``HumanMessage``
+    之前并持久化（消息 ID 不变）。该首条消息在整个会话中保持冻结，其内容
+    永远不再变更，因此前缀缓存在后续每一轮都能命中。
 
-    Midnight crossing
+    跨午夜
     -----------------
-    If the conversation spans midnight, the current date differs from the date that
-    was injected earlier.  In that case a lightweight date-update reminder is prepended
-    to the **current** (last) HumanMessage and persisted.  Subsequent turns on the new
-    day see the corrected date in history and skip re-injection.
+    当会话跨越午夜，当前日期与先前注入的日期不一致时，会向当前（最后一条）
+    ``HumanMessage`` 注入轻量的日期更新提醒并持久化。新一天的后续轮次在历史
+    中读到修正后的日期，因此不会重复注入。
     """
 
     def __init__(self, agent_name: str | None = None, *, app_config: AppConfig | None = None):
+        """初始化动态上下文中间件。
+
+        Args:
+            agent_name: 自定义 Agent 名称，用于按 Agent 加载记忆。
+            app_config: 显式传入的应用配置，避免依赖全局单例。
+        """
         super().__init__()
         self._agent_name = agent_name
         self._app_config = app_config
 
     def _build_full_reminder(self) -> str:
+        """构建首轮注入的完整提醒内容（记忆 + 日期）。"""
         from deerflow.agents.lead_agent.prompt import _get_memory_context
 
         # Memory injection is gated by injection_enabled; date is always included.
@@ -119,6 +103,7 @@ class DynamicContextMiddleware(AgentMiddleware):
         return "\n".join(lines)
 
     def _build_date_update_reminder(self) -> str:
+        """构建跨午夜时仅包含日期的轻量提醒内容。"""
         current_date = datetime.now().strftime("%Y-%m-%d, %A")
         return "\n".join(
             [
@@ -130,14 +115,14 @@ class DynamicContextMiddleware(AgentMiddleware):
 
     @staticmethod
     def _make_reminder_and_user_messages(original: HumanMessage, reminder_content: str) -> tuple[HumanMessage, HumanMessage]:
-        """Return (reminder_msg, user_msg) using the ID-swap technique.
+        """通过 ID 交换技巧返回 (reminder_msg, user_msg)。
 
-        reminder_msg takes the original message's ID so that add_messages replaces it
-        in-place (preserving position).  user_msg carries the original content with a
-        derived ``{id}__user`` ID and is appended immediately after by add_messages.
+        ``reminder_msg`` 复用原消息的 ID，便于 ``add_messages`` 原地替换（保留
+        位置）。``user_msg`` 携带原内容并使用派生的 ``{id}__user`` ID，由
+        ``add_messages`` 紧随其后追加。
 
-        If the original message has no ID a stable UUID is generated so the derived
-        ``{id}__user`` ID never collapses to the ambiguous ``None__user`` string.
+        若原消息没有 ID，则生成稳定的 UUID，避免派生的 ``{id}__user``
+        退化为歧义的 ``None__user`` 字符串。
         """
         stable_id = original.id or str(uuid.uuid4())
         reminder_msg = HumanMessage(
@@ -154,6 +139,7 @@ class DynamicContextMiddleware(AgentMiddleware):
         return reminder_msg, user_msg
 
     def _inject(self, state) -> dict | None:
+        """执行赋值。"""
         messages = list(state.get("messages", []))
         if not messages:
             return None
@@ -197,8 +183,10 @@ class DynamicContextMiddleware(AgentMiddleware):
 
     @override
     def before_agent(self, state, runtime: Runtime) -> dict | None:
+        """Agent 启动前同步钩子，用于在状态中注入初始数据。"""
         return self._inject(state)
 
     @override
     async def abefore_agent(self, state, runtime: Runtime) -> dict | None:
+        """Agent 启动前异步钩子，用于在状态中注入初始数据。"""
         return self._inject(state)

@@ -1,4 +1,4 @@
-"""Memory update queue with debounce mechanism."""
+"""带去抖机制的记忆更新队列。"""
 
 import logging
 import threading
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConversationContext:
-    """Context for a conversation to be processed for memory update."""
+    """待处理记忆更新的会话上下文。"""
 
     thread_id: str
     messages: list[Any]
@@ -26,15 +26,14 @@ class ConversationContext:
 
 
 class MemoryUpdateQueue:
-    """Queue for memory updates with debounce mechanism.
+    """带去抖机制的记忆更新队列。
 
-    This queue collects conversation contexts and processes them after
-    a configurable debounce period. Multiple conversations received within
-    the debounce window are batched together.
+    该队列收集会话上下文，并在可配置的去抖时长后处理它们。
+    在去抖窗口内收到的多条会话将被合并处理。
     """
 
     def __init__(self):
-        """Initialize the memory update queue."""
+        """初始化记忆更新队列。"""
         self._queue: list[ConversationContext] = []
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
@@ -46,7 +45,7 @@ class MemoryUpdateQueue:
         user_id: str | None,
         agent_name: str | None,
     ) -> tuple[str, str | None, str | None]:
-        """Return the debounce identity for a memory update target."""
+        """返回记忆更新目标在去抖窗口内的合并键。"""
         return (thread_id, user_id, agent_name)
 
     def add(
@@ -58,17 +57,16 @@ class MemoryUpdateQueue:
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
     ) -> None:
-        """Add a conversation to the update queue.
+        """向更新队列添加一条会话。
 
         Args:
-            thread_id: The thread ID.
-            messages: The conversation messages.
-            agent_name: If provided, memory is stored per-agent. If None, uses global memory.
-            user_id: The user ID captured at enqueue time. Stored in ConversationContext so it
-                survives the threading.Timer boundary (ContextVar does not propagate across
-                raw threads).
-            correction_detected: Whether recent turns include an explicit correction signal.
-            reinforcement_detected: Whether recent turns include a positive reinforcement signal.
+            thread_id: 线程 ID。
+            messages: 会话消息列表。
+            agent_name: 若提供则按 Agent 隔离存储记忆；为 ``None`` 时使用全局记忆。
+            user_id: 入队时捕获的用户 ID，存入 ``ConversationContext`` 以跨越
+                ``threading.Timer`` 边界（ContextVar 不会跨原生线程传播）。
+            correction_detected: 最近的对话轮次中是否出现显式纠正信号。
+            reinforcement_detected: 最近的对话轮次中是否出现正向强化信号。
         """
         config = get_memory_config()
         if not config.enabled:
@@ -96,7 +94,7 @@ class MemoryUpdateQueue:
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
     ) -> None:
-        """Add a conversation and start processing immediately in the background."""
+        """添加会话并立即在后台开始处理。"""
         config = get_memory_config()
         if not config.enabled:
             return
@@ -124,6 +122,7 @@ class MemoryUpdateQueue:
         correction_detected: bool,
         reinforcement_detected: bool,
     ) -> None:
+        """执行赋值。"""
         queue_key = self._queue_key(thread_id, user_id, agent_name)
         existing_context = next(
             (context for context in self._queue if self._queue_key(context.thread_id, context.user_id, context.agent_name) == queue_key),
@@ -144,14 +143,14 @@ class MemoryUpdateQueue:
         self._queue.append(context)
 
     def _reset_timer(self) -> None:
-        """Reset the debounce timer."""
+        """重置去抖定时器。"""
         config = get_memory_config()
         self._schedule_timer(config.debounce_seconds)
 
         logger.debug("Memory update timer set for %ss", config.debounce_seconds)
 
     def _schedule_timer(self, delay_seconds: float) -> None:
-        """Schedule queue processing after the provided delay."""
+        """在给定延迟后调度队列处理。"""
         # Cancel existing timer if any
         if self._timer is not None:
             self._timer.cancel()
@@ -164,7 +163,7 @@ class MemoryUpdateQueue:
         self._timer.start()
 
     def _process_queue(self) -> None:
-        """Process all queued conversation contexts."""
+        """处理所有已入队的会话上下文。"""
         # Import here to avoid circular dependency
         from deerflow.agents.memory.updater import MemoryUpdater
 
@@ -214,9 +213,9 @@ class MemoryUpdateQueue:
                 self._processing = False
 
     def flush(self) -> None:
-        """Force immediate processing of the queue.
+        """立即强制处理队列。
 
-        This is useful for testing or graceful shutdown.
+        常用于测试或优雅关闭场景。
         """
         with self._lock:
             if self._timer is not None:
@@ -226,16 +225,16 @@ class MemoryUpdateQueue:
         self._process_queue()
 
     def flush_nowait(self) -> None:
-        """Start queue processing immediately in a background thread."""
+        """在后台线程中立即开始处理队列。"""
         with self._lock:
             # Daemon thread: queued messages may be lost if the process exits
             # before _process_queue completes. Acceptable for best-effort memory updates.
             self._schedule_timer(0)
 
     def clear(self) -> None:
-        """Clear the queue without processing.
+        """清空队列而不处理。
 
-        This is useful for testing.
+        常用于测试场景。
         """
         with self._lock:
             if self._timer is not None:
@@ -246,13 +245,13 @@ class MemoryUpdateQueue:
 
     @property
     def pending_count(self) -> int:
-        """Get the number of pending updates."""
+        """获取待处理更新数。"""
         with self._lock:
             return len(self._queue)
 
     @property
     def is_processing(self) -> bool:
-        """Check if the queue is currently being processed."""
+        """检查队列是否正在被处理。"""
         with self._lock:
             return self._processing
 
@@ -263,10 +262,10 @@ _queue_lock = threading.Lock()
 
 
 def get_memory_queue() -> MemoryUpdateQueue:
-    """Get the global memory update queue singleton.
+    """获取全局记忆更新队列单例。
 
     Returns:
-        The memory update queue instance.
+        记忆更新队列实例。
     """
     global _memory_queue
     with _queue_lock:
@@ -276,9 +275,9 @@ def get_memory_queue() -> MemoryUpdateQueue:
 
 
 def reset_memory_queue() -> None:
-    """Reset the global memory queue.
+    """重置全局记忆队列。
 
-    This is useful for testing.
+    常用于测试场景。
     """
     global _memory_queue
     with _queue_lock:

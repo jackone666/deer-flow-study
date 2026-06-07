@@ -1,4 +1,8 @@
-"""Thread-safe network utilities."""
+"""线程安全的网络工具。
+
+主要提供 :class:`PortAllocator` 与一组基于它的模块级便利函数（``get_free_port``、
+``release_port``），用于在并发环境下安全地申请与释放端口。
+"""
 
 import socket
 import threading
@@ -6,40 +10,46 @@ from contextlib import contextmanager
 
 
 class PortAllocator:
-    """Thread-safe port allocator that prevents port conflicts in concurrent environments.
+    """线程安全的端口分配器，避免并发环境下的端口冲突。
 
-    This class maintains a set of reserved ports and uses a lock to ensure that
-    port allocation is atomic. Once a port is allocated, it remains reserved until
-    explicitly released.
+    内部维护一份「已保留端口」集合，配合锁保证分配动作的原子性。已分配
+    的端口会一直保留，直到调用方显式调用 :meth:`release`。
 
-    Usage:
+    用法::
+
         allocator = PortAllocator()
 
-        # Option 1: Manual allocation and release
+        # 方式一：手动申请与释放
         port = allocator.allocate(start_port=8080)
         try:
-            # Use the port...
+            # 使用端口...
         finally:
             allocator.release(port)
 
-        # Option 2: Context manager (recommended)
+        # 方式二：上下文管理器（推荐）
         with allocator.allocate_context(start_port=8080) as port:
-            # Use the port...
-            # Port is automatically released when exiting the context
+            # 使用端口...
+            # 退出上下文时自动释放
     """
 
     def __init__(self):
+        """初始化分配器内部状态（锁与保留集合）。"""
         self._lock = threading.Lock()
         self._reserved_ports: set[int] = set()
 
     def _is_port_available(self, port: int) -> bool:
-        """Check if a port is available for binding.
+        """检查端口是否可用于绑定。
+
+        不仅会查询「已保留集合」，还会实际尝试 ``bind`` 到 ``0.0.0.0``。
+        选择通配地址是为了与 Docker 的行为保持一致——Docker 默认绑定
+        到 ``0.0.0.0:PORT``，仅探测 ``127.0.0.1`` 会在 Docker 已占用
+        通配地址时误判为可用。
 
         Args:
-            port: The port number to check.
+            port: 待检测的端口号。
 
         Returns:
-            True if the port is available, False otherwise.
+            端口可用时返回 ``True``，否则返回 ``False``。
         """
         if port in self._reserved_ports:
             return False
@@ -56,20 +66,20 @@ class PortAllocator:
                 return False
 
     def allocate(self, start_port: int = 8080, max_range: int = 100) -> int:
-        """Allocate an available port in a thread-safe manner.
+        """以线程安全的方式申请一个可用端口。
 
-        This method is thread-safe. It finds an available port, marks it as reserved,
-        and returns it. The port remains reserved until release() is called.
+        该方法线程安全：先找到一个可用端口，再将其加入保留集合并返回。
+        端口会一直保留到 :meth:`release` 被调用。
 
         Args:
-            start_port: The port number to start searching from.
-            max_range: Maximum number of ports to search.
+            start_port: 搜索起始端口。
+            max_range: 最多搜索的端口数。
 
         Returns:
-            An available port number.
+            分配到的可用端口号。
 
         Raises:
-            RuntimeError: If no available port is found in the specified range.
+            RuntimeError: 在指定区间内未找到可用端口。
         """
         with self._lock:
             for port in range(start_port, start_port + max_range):
@@ -80,24 +90,24 @@ class PortAllocator:
             raise RuntimeError(f"No available port found in range {start_port}-{start_port + max_range}")
 
     def release(self, port: int) -> None:
-        """Release a previously allocated port.
+        """释放先前申请的端口。
 
         Args:
-            port: The port number to release.
+            port: 待释放的端口号。
         """
         with self._lock:
             self._reserved_ports.discard(port)
 
     @contextmanager
     def allocate_context(self, start_port: int = 8080, max_range: int = 100):
-        """Context manager for port allocation with automatic release.
+        """带自动释放的端口分配上下文管理器。
 
         Args:
-            start_port: The port number to start searching from.
-            max_range: Maximum number of ports to search.
+            start_port: 搜索起始端口。
+            max_range: 最多搜索的端口数。
 
         Yields:
-            An available port number.
+            分配到的可用端口号。
         """
         port = self.allocate(start_port, max_range)
         try:
@@ -111,29 +121,28 @@ _global_port_allocator = PortAllocator()
 
 
 def get_free_port(start_port: int = 8080, max_range: int = 100) -> int:
-    """Get a free port in a thread-safe manner.
+    """以线程安全的方式获取一个空闲端口。
 
-    This function uses a global port allocator to ensure that concurrent calls
-    don't return the same port. The port is marked as reserved until release_port()
-    is called.
+    内部使用全局端口分配器，确保并发调用不会返回同一端口。端口会被标记
+    为保留，直到调用 :func:`release_port` 才释放。
 
     Args:
-        start_port: The port number to start searching from.
-        max_range: Maximum number of ports to search.
+        start_port: 搜索起始端口。
+        max_range: 最多搜索的端口数。
 
     Returns:
-        An available port number.
+        分配到的可用端口号。
 
     Raises:
-        RuntimeError: If no available port is found in the specified range.
+        RuntimeError: 在指定区间内未找到可用端口。
     """
     return _global_port_allocator.allocate(start_port, max_range)
 
 
 def release_port(port: int) -> None:
-    """Release a previously allocated port.
+    """释放先前通过 :func:`get_free_port` 申请的端口。
 
     Args:
-        port: The port number to release.
+        port: 待释放的端口号。
     """
     _global_port_allocator.release(port)

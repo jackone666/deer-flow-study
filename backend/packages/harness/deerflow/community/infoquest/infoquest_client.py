@@ -1,6 +1,6 @@
-"""Util that calls InfoQuest Search And Fetch API.
+"""调用 InfoQuest 搜索与抓取 API 的工具。
 
-In order to set this up, follow instructions at:
+设置方式见:
 https://docs.byteplus.com/en/docs/InfoQuest/What_is_Info_Quest
 """
 
@@ -15,9 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 class InfoQuestClient:
-    """Client for interacting with the InfoQuest web search and fetch API."""
+    """与 InfoQuest Web 搜索和抓取 API 交互的客户端。"""
 
     def __init__(self, fetch_time: int = -1, fetch_timeout: int = -1, fetch_navigation_timeout: int = -1, search_time_range: int = -1, image_search_time_range: int = -1, image_size: str = "i"):
+        """初始化客户端,记录配置详情。
+
+        Args:
+            fetch_time: 抓取时间限制,默认 -1 表示不设上限。
+            fetch_timeout: 抓取整体超时,默认 -1 表示不设上限。
+            fetch_navigation_timeout: 导航超时,默认 -1 表示不设上限。
+            search_time_range: 搜索时间范围,默认 -1 表示不设。
+            image_search_time_range: 图片搜索时间范围(1-365),默认 -1 表示不设。
+            image_size: 图片尺寸(``"l"``/``"m"``/``"i"``),默认 ``"i"``。
+        """
         logger.info("\n============================================\n🚀 BytePlus InfoQuest Client Initialization 🚀\n============================================")
 
         self.fetch_time = fetch_time
@@ -34,7 +44,7 @@ class InfoQuestClient:
                 f"├── Fetch Timeout: {fetch_timeout} {'(Default: No fetch timeout)' if fetch_timeout == -1 else '(Custom)'}\n"
                 f"├── Navigation Timeout: {fetch_navigation_timeout} {'(Default: No Navigation Timeout)' if fetch_navigation_timeout == -1 else '(Custom)'}\n"
                 f"├── Search Time Range: {search_time_range} {'(Default: No Search Time Range)' if search_time_range == -1 else '(Custom)'}\n"
-                f"├── Image Search Time Range: {image_search_time_range} {'(Default: No Image Search Time Range)' if image_search_time_range == -1 else '(Custom)'}\n"
+                f"├── Image Search Time Range: {image_search_time_range} {'(Default: No Search Time Range)' if image_search_time_range == -1 else '(Custom)'}\n"
                 f"├── Image Size: {image_size} {'(Default: Medium)' if image_size == 'm' else '(Custom)'}\n"
                 f"└── API Key: {'✅ Configured' if self.api_key_set else '❌ Not set'}"
             )
@@ -43,6 +53,16 @@ class InfoQuestClient:
             logger.debug("\n" + "*" * 70 + "\n")
 
     def fetch(self, url: str, return_format: str = "html") -> str:
+        """通过 InfoQuest 抓取接口拉取网页内容。
+
+        Args:
+            url: 待抓取的目标 URL。
+            return_format: 返回格式,默认 ``"html"``。
+
+        Returns:
+            抓取结果(优先 ``reader_result``,次选 ``content`` 字段);失败时返回
+            ``"Error: ..."`` 形式字符串。
+        """
         if logger.isEnabledFor(logging.DEBUG):
             url_truncated = url[:50] + "..." if len(url) > 50 else url
             logger.debug(
@@ -108,7 +128,7 @@ class InfoQuestClient:
 
     @staticmethod
     def _prepare_headers() -> dict[str, str]:
-        """Prepare request headers."""
+        """构造请求头,自动附带 ``INFOQUEST_API_KEY``(若已设置)。"""
         headers = {
             "Content-Type": "application/json",
         }
@@ -123,7 +143,7 @@ class InfoQuestClient:
         return headers
 
     def _prepare_crawl_request_data(self, url: str, return_format: str) -> dict[str, Any]:
-        """Prepare request data with formatted parameters."""
+        """构造抓取请求的 data,包含可选的 timeout 参数。"""
         # Normalize return_format
         if return_format and return_format.lower() == "html":
             normalized_format = "HTML"
@@ -154,7 +174,19 @@ class InfoQuestClient:
         site: str,
         output_format: str = "JSON",
     ) -> dict:
-        """Get results from the InfoQuest Web-Search API synchronously."""
+        """同步调用 InfoQuest Web-Search API 拉取原始结果。
+
+        Args:
+            query: 搜索关键词。
+            site: 可选的站点限定,空字符串表示不限。
+            output_format: 输出格式,默认 ``"JSON"``。
+
+        Returns:
+            API 响应的 JSON 字典。
+
+        Raises:
+            requests.HTTPError: 当 HTTP 状态非 2xx 时抛出。
+        """
         headers = self._prepare_headers()
 
         params = {"format": output_format, "query": query}
@@ -177,7 +209,7 @@ class InfoQuestClient:
 
     @staticmethod
     def clean_results(raw_results: list[dict[str, dict[str, dict[str, Any]]]]) -> list[dict]:
-        """Clean results from InfoQuest Web-Search API."""
+        """把 InfoQuest Web-Search API 原始结果清洗为统一格式(普通页面 + 新闻)。"""
         logger.debug("Processing web-search results")
 
         seen_urls = set()
@@ -237,6 +269,16 @@ class InfoQuestClient:
         site: str = "",
         output_format: str = "JSON",
     ) -> str:
+        """调用 InfoQuest 执行 Web 搜索,返回清洗后的 JSON 结果。
+
+        Args:
+            query: 搜索关键词。
+            site: 可选站点限定,默认不限。
+            output_format: 输出格式,默认 ``"JSON"``。
+
+        Returns:
+            搜索结果的 JSON 字符串;失败时返回 ``"Error: ..."`` 形式字符串。
+        """
         if logger.isEnabledFor(logging.DEBUG):
             query_truncated = query[:50] + "..." if len(query) > 50 else query
             logger.debug(
@@ -284,7 +326,7 @@ class InfoQuestClient:
 
     @staticmethod
     def clean_results_with_image_search(raw_results: list[dict[str, dict[str, dict[str, Any]]]]) -> list[dict]:
-        """Clean results from InfoQuest Web-Search API."""
+        """把 InfoQuest 图片搜索结果清洗为 ``image_url``/``title`` 字段。"""
         logger.debug("Processing web-search results")
 
         seen_urls = set()
@@ -318,7 +360,19 @@ class InfoQuestClient:
         site: str = "",
         output_format: str = "JSON",
     ) -> dict:
-        """Get image search results from the InfoQuest Web-Search API synchronously."""
+        """同步拉取 InfoQuest 图片搜索的原始结果。
+
+        Args:
+            query: 搜索关键词。
+            site: 可选的站点限定,空字符串表示不限。
+            output_format: 输出格式,默认 ``"JSON"``。
+
+        Returns:
+            API 响应的 JSON 字典。
+
+        Raises:
+            requests.HTTPError: 当 HTTP 状态非 2xx 时抛出。
+        """
         headers = self._prepare_headers()
 
         params = {"format": output_format, "query": query, "search_type": "Images"}
@@ -356,6 +410,16 @@ class InfoQuestClient:
         site: str = "",
         output_format: str = "JSON",
     ) -> str:
+        """调用 InfoQuest 执行图片搜索,返回清洗后的 JSON 结果。
+
+        Args:
+            query: 搜索关键词。
+            site: 可选站点限定,默认不限。
+            output_format: 输出格式,默认 ``"JSON"``。
+
+        Returns:
+            图片搜索结果的 JSON 字符串;失败时返回 ``"Error: ..."`` 形式字符串。
+        """
         if logger.isEnabledFor(logging.DEBUG):
             query_truncated = query[:50] + "..." if len(query) > 50 else query
             logger.debug(

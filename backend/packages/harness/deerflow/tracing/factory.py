@@ -1,3 +1,9 @@
+"""Tracing 回调工厂。
+
+为每个显式启用的 tracing provider（LangSmith / Langfuse）构造对应的
+LangChain 回调，统一返回 ``list[Any]`` 以便嵌入 ``RunnableConfig.callbacks``。
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,12 +16,31 @@ from deerflow.config import (
 
 
 def _create_langsmith_tracer(config) -> Any:
+    """根据 tracing_config.langsmith 构造 LangSmith tracer。
+
+    Args:
+        config: ``tracing_config.langsmith`` 子配置，含 ``project`` 等字段。
+
+    Returns:
+        配置好项目名的 :class:`langchain_core.tracers.langchain.LangChainTracer`。
+    """
     from langchain_core.tracers.langchain import LangChainTracer
 
     return LangChainTracer(project_name=config.project)
 
 
 def _create_langfuse_handler(config) -> Any:
+    """根据 tracing_config.langfuse 构造 Langfuse LangChain 回调。
+
+    langfuse>=4 通过客户端单例管理项目级凭据，因此会先实例化一次
+    :class:`langfuse.Langfuse`，再创建挂载到该客户端的 CallbackHandler。
+
+    Args:
+        config: ``tracing_config.langfuse`` 子配置，含 secret/public key 与 host。
+
+    Returns:
+        已绑定凭据的 Langfuse CallbackHandler。
+    """
     from langfuse import Langfuse
     from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 
@@ -30,7 +55,7 @@ def _create_langfuse_handler(config) -> Any:
 
 
 def build_tracing_callbacks() -> list[Any]:
-    """Build callbacks for all explicitly enabled tracing providers."""
+    """为所有显式启用的 tracing provider 构造回调。"""
     validate_enabled_tracing_providers()
     enabled_providers = get_enabled_tracing_providers()
     if not enabled_providers:

@@ -1,3 +1,5 @@
+"""Jina Reader API 异步客户端。"""
+
 import logging
 import os
 
@@ -9,7 +11,19 @@ _api_key_warned = False
 
 
 class JinaClient:
+    """Jina Reader API 异步客户端,用于抓取网页内容。"""
+
     async def crawl(self, url: str, return_format: str = "html", timeout: int = 10) -> str:
+        """异步抓取指定 URL 的网页内容。
+
+        Args:
+            url: 目标 URL。
+            return_format: 返回格式,默认 ``"html"``。
+            timeout: 单次请求超时秒数,默认 10。
+
+        Returns:
+            抓取结果文本;失败时返回 ``"Error: ..."`` 形式字符串。
+        """
         global _api_key_warned
         headers = {
             "Content-Type": "application/json",

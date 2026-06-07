@@ -1,8 +1,7 @@
-"""LangGraph-compatible runtime — runs, streaming, and lifecycle management.
+"""LangGraph 兼容的运行时——Run 管理、流式输出与生命周期管理。
 
-Re-exports the public API of :mod:`~deerflow.runtime.runs` and
-:mod:`~deerflow.runtime.stream_bridge` so that consumers can import
-directly from ``deerflow.runtime``.
+重新导出 :mod:`~deerflow.runtime.runs` 与 :mod:`~deerflow.runtime.stream_bridge`
+的公共 API，使消费者可以直接从 ``deerflow.runtime`` 导入。
 """
 
 from .checkpointer import checkpointer_context, get_checkpointer, make_checkpointer, reset_checkpointer

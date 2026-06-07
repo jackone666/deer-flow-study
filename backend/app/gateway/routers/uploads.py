@@ -1,4 +1,5 @@
-"""Upload router for handling file uploads."""
+"""处理文件上传的上传路由。"""
+
 
 import logging
 import os
@@ -40,7 +41,8 @@ DEFAULT_MAX_TOTAL_SIZE = 100 * 1024 * 1024
 
 
 class UploadedFileInfo(BaseModel):
-    """Uploaded file metadata exposed by upload and list APIs."""
+    """由上传和列表 API 暴露的上传文件元数据。"""
+
 
     filename: str
     size: int
@@ -57,7 +59,8 @@ class UploadedFileInfo(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    """Response model for file upload."""
+    """文件上传的响应模型。"""
+
 
     success: bool
     files: list[UploadedFileInfo]
@@ -66,14 +69,16 @@ class UploadResponse(BaseModel):
 
 
 class UploadListResponse(BaseModel):
-    """Response model for uploaded file listing."""
+    """上传文件列表的响应模型。"""
+
 
     files: list[UploadedFileInfo]
     count: int
 
 
 class UploadLimits(BaseModel):
-    """Application-level upload limits exposed to clients."""
+    """暴露给客户端的应用级上传限制。"""
+
 
     max_files: int
     max_file_size: int
@@ -81,13 +86,12 @@ class UploadLimits(BaseModel):
 
 
 def _make_file_sandbox_writable(file_path: os.PathLike[str] | str) -> None:
-    """Ensure uploaded files remain writable when mounted into non-local sandboxes.
-
-    In AIO sandbox mode, the gateway writes the authoritative host-side file
-    first, then the sandbox runtime may rewrite the same mounted path. Granting
-    world-writable access here prevents permission mismatches between the
-    gateway user and the sandbox runtime user.
+    """确保上传的文件在挂载到非本地沙箱时仍可写。
+    
+            在 AIO 沙箱模式下，网关负责在宿主机侧写入权威文件；
+            此处将其权限改为 0o666，使沙箱用户在 bind-mount 后仍能写入。
     """
+
     file_stat = os.lstat(file_path)
     if stat.S_ISLNK(file_stat.st_mode):
         logger.warning("Skipping sandbox chmod for symlinked upload path: %s", file_path)
@@ -99,14 +103,12 @@ def _make_file_sandbox_writable(file_path: os.PathLike[str] | str) -> None:
 
 
 def _make_file_sandbox_readable(file_path: os.PathLike[str] | str) -> None:
-    """Ensure uploaded files are readable by the sandbox process.
-
-    For Docker sandboxes (AIO), the gateway writes files as root with 0o600
-    permissions, then bind-mounts the host directory into the container. The
-    sandbox process inside the container runs as a non-root user and cannot
-    read those files without group/other read bits. This function adds
-    ``S_IRGRP | S_IROTH`` so the sandbox can read the uploaded content.
+    """确保沙箱进程可读取上传的文件。
+    
+            对于 Docker 沙箱（AIO），网关以 root 身份写入文件，权限为 0o600；
+            沙箱用户按原权限无法读取，因此此处放宽到 0o644。
     """
+
     file_stat = os.lstat(file_path)
     if stat.S_ISLNK(file_stat.st_mode):
         logger.warning("Skipping sandbox chmod for symlinked upload path: %s", file_path)
@@ -118,11 +120,12 @@ def _make_file_sandbox_readable(file_path: os.PathLike[str] | str) -> None:
 
 
 def _uses_thread_data_mounts(sandbox_provider: SandboxProvider) -> bool:
+    """判断沙盒 Provider 是否使用线程级数据卷挂载。"""
     return bool(getattr(sandbox_provider, "uses_thread_data_mounts", False))
 
 
 def _get_uploads_config_value(app_config: AppConfig, key: str, default: object) -> object:
-    """Read a value from the uploads config, supporting dict and attribute access."""
+    """从 ``uploads`` 配置中读取一个值，兼容 dict 与对象两种形式。"""
     uploads_cfg = getattr(app_config, "uploads", None)
     if isinstance(uploads_cfg, dict):
         return uploads_cfg.get(key, default)
@@ -130,6 +133,7 @@ def _get_uploads_config_value(app_config: AppConfig, key: str, default: object) 
 
 
 def _get_upload_limit(app_config: AppConfig, key: str, default: int, *, legacy_key: str | None = None) -> int:
+    """读取数值型上传限制；非法或非正时回退到 ``default``。"""
     try:
         value = _get_uploads_config_value(app_config, key, None)
         if value is None and legacy_key is not None:
@@ -146,6 +150,7 @@ def _get_upload_limit(app_config: AppConfig, key: str, default: int, *, legacy_k
 
 
 def _get_upload_limits(app_config: AppConfig) -> UploadLimits:
+    """组合 ``max_files``、``max_file_size``、``max_total_size`` 三个限制。"""
     return UploadLimits(
         max_files=_get_upload_limit(app_config, "max_files", DEFAULT_MAX_FILES, legacy_key="max_file_count"),
         max_file_size=_get_upload_limit(app_config, "max_file_size", DEFAULT_MAX_FILE_SIZE, legacy_key="max_single_file_size"),
@@ -154,6 +159,7 @@ def _get_upload_limits(app_config: AppConfig) -> UploadLimits:
 
 
 def _cleanup_uploaded_paths(paths: list[os.PathLike[str] | str]) -> None:
+    """按反序删除一批已落盘的上传文件，吞掉 ``FileNotFoundError``。"""
     for path in reversed(paths):
         try:
             os.unlink(path)
@@ -172,6 +178,7 @@ async def _write_upload_file_with_limits(
     max_total_size: int,
     total_size: int,
 ) -> tuple[os.PathLike[str] | str, int, int]:
+    """把上传文件按 chunk 写入磁盘并实时校验单文件与累计大小限制。"""
     file_size = 0
     file_path, fh = open_upload_file_no_symlink(uploads_dir, display_filename)
     try:
@@ -196,11 +203,12 @@ async def _write_upload_file_with_limits(
 
 
 def _auto_convert_documents_enabled(app_config: AppConfig) -> bool:
-    """Return whether automatic host-side document conversion is enabled.
-
-    The secure default is disabled unless an operator explicitly opts in via
-    uploads.auto_convert_documents in config.yaml.
+    """返回是否启用了自动的宿主机侧文档转换。
+    
+            出于安全考虑，默认禁用；只有运维通过 ``uploads.auto_convert_documents`` 配置
+            显式开启后才会启用。
     """
+
     try:
         raw = _get_uploads_config_value(app_config, "auto_convert_documents", False)
         if isinstance(raw, str):
@@ -218,7 +226,8 @@ async def upload_files(
     files: list[UploadFile] = File(...),
     config: AppConfig = Depends(get_config),
 ) -> UploadResponse:
-    """Upload multiple files to a thread's uploads directory."""
+    """将多个文件上传到线程的 uploads 目录。"""
+
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -353,14 +362,16 @@ async def get_upload_limits(
     request: Request,
     config: AppConfig = Depends(get_config),
 ) -> UploadLimits:
-    """Return upload limits used by the gateway for this thread."""
+    """返回网关在该线程上使用的上传限制。"""
+
     return _get_upload_limits(config)
 
 
 @router.get("/list", response_model=UploadListResponse)
 @require_permission("threads", "read", owner_check=True)
 async def list_uploaded_files(thread_id: str, request: Request) -> UploadListResponse:
-    """List all files in a thread's uploads directory."""
+    """列出线程 uploads 目录中的所有文件。"""
+
     try:
         uploads_dir = get_uploads_dir(thread_id)
     except ValueError as e:
@@ -379,7 +390,8 @@ async def list_uploaded_files(thread_id: str, request: Request) -> UploadListRes
 @router.delete("/{filename}")
 @require_permission("threads", "delete", owner_check=True, require_existing=True)
 async def delete_uploaded_file(thread_id: str, filename: str, request: Request) -> dict:
-    """Delete a file from a thread's uploads directory."""
+    """删除线程 uploads 目录中的文件。"""
+
     try:
         uploads_dir = get_uploads_dir(thread_id)
     except ValueError as e:

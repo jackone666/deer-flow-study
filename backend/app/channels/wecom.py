@@ -1,3 +1,5 @@
+"""企业微信渠道实现，通过 WebSocket 长连接接入。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class WeComChannel(Channel):
+    """基于 ``wecom-aibot-python-sdk`` WebSocket 长连接的企业微信 IM 渠道。"""
+
     def __init__(self, bus: MessageBus, config: dict[str, Any]) -> None:
+        """初始化企业微信渠道，缓存机器人凭据和 WebSocket 上下文。"""
         super().__init__(name="wecom", bus=bus, config=config)
         self._bot_id: str | None = None
         self._bot_secret: str | None = None
@@ -31,15 +36,18 @@ class WeComChannel(Channel):
 
     @property
     def supports_streaming(self) -> bool:
+        """企业微信渠道支持流式 stream reply。"""
         return True
 
     def _clear_ws_context(self, thread_ts: str | None) -> None:
+        """清理指定 thread_ts 对应的 WebSocket 帧和流 ID 缓存。"""
         if not thread_ts:
             return
         self._ws_frames.pop(thread_ts, None)
         self._ws_stream_ids.pop(thread_ts, None)
 
     async def _send_ws_upload_command(self, req_id: str, body: dict[str, Any], cmd: str) -> dict[str, Any]:
+        """通过 WS 客户端的 ``_ws_manager.send_reply`` 发送媒体上传相关的命令。"""
         if not self._ws_client:
             raise RuntimeError("WeCom WebSocket client is not available")
 
@@ -52,6 +60,7 @@ class WeComChannel(Channel):
         return await send_reply_async(req_id, body, cmd)
 
     async def start(self) -> None:
+        """启动渠道：构造 WSClient、注册事件回调、订阅总线。"""
         if self._running:
             return
 
@@ -85,6 +94,7 @@ class WeComChannel(Channel):
         logger.info("WeCom channel started")
 
     async def stop(self) -> None:
+        """停止渠道：取消 WS 任务、断开连接、清理上下文。"""
         self._running = False
         self.bus.unsubscribe_outbound(self._on_outbound)
         if self._ws_task:
@@ -98,18 +108,20 @@ class WeComChannel(Channel):
                 self._ws_client.disconnect()
             except Exception:
                 pass
-        self._ws_client = None
+            self._ws_client = None
         self._ws_frames.clear()
         self._ws_stream_ids.clear()
         logger.info("WeCom channel stopped")
 
     async def send(self, msg: OutboundMessage, *, _max_retries: int = 3) -> None:
+        """把出站消息通过 WebSocket stream reply 发送。"""
         if self._ws_client:
             await self._send_ws(msg, _max_retries=_max_retries)
             return
         logger.warning("[WeCom] send called but WebSocket client is not available")
 
     async def _on_outbound(self, msg: OutboundMessage) -> None:
+        """总线出站回调：先发文本，失败时清理上下文；成功后再依次发文件。"""
         if msg.channel_name != self.name:
             return
 
@@ -133,6 +145,7 @@ class WeComChannel(Channel):
             self._clear_ws_context(msg.thread_ts)
 
     async def send_file(self, msg: OutboundMessage, attachment: ResolvedAttachment) -> bool:
+        """通过 WebSocket 媒体上传协议上传并发送单个文件附件。"""
         if not msg.is_final:
             return True
         if not self._ws_client:
@@ -173,6 +186,7 @@ class WeComChannel(Channel):
             return False
 
     async def _on_ws_text(self, frame: dict[str, Any]) -> None:
+        """处理 WS 文本消息事件，附上引用消息内容（如有）并发布。"""
         body = frame.get("body", {}) or {}
         text = ((body.get("text") or {}).get("content") or "").strip()
         quote = body.get("quote", {}).get("text", {}).get("content", "").strip()
@@ -181,6 +195,7 @@ class WeComChannel(Channel):
         await self._publish_ws_inbound(frame, text + (f"\nQuote message: {quote}" if quote else ""))
 
     async def _on_ws_mixed(self, frame: dict[str, Any]) -> None:
+        """处理 WS 混合消息事件：抽取文本和图片/文件附件并发布。"""
         body = frame.get("body", {}) or {}
         mixed = body.get("mixed") or {}
         items = mixed.get("msg_item") or []
@@ -212,6 +227,7 @@ class WeComChannel(Channel):
         await self._publish_ws_inbound(frame, text, files=files)
 
     async def _on_ws_image(self, frame: dict[str, Any]) -> None:
+        """处理 WS 图片消息事件：抽取 URL/aeskey 并发布。"""
         body = frame.get("body", {}) or {}
         image = body.get("image") or {}
         url = image.get("url")
@@ -231,6 +247,7 @@ class WeComChannel(Channel):
         )
 
     async def _on_ws_file(self, frame: dict[str, Any]) -> None:
+        """处理 WS 文件消息事件：抽取 URL/aeskey 并发布。"""
         body = frame.get("body", {}) or {}
         file_obj = body.get("file") or {}
         url = file_obj.get("url")
@@ -256,6 +273,7 @@ class WeComChannel(Channel):
         *,
         files: list[dict[str, Any]] | None = None,
     ) -> None:
+        """把 WS 帧转换为入站消息、缓存 stream id 并发“正在处理”提示。"""
         if not self._ws_client:
             return
         try:
@@ -272,7 +290,7 @@ class WeComChannel(Channel):
 
         inbound_type = InboundMessageType.COMMAND if text.startswith("/") else InboundMessageType.CHAT
         inbound = self._make_inbound(
-            chat_id=user_id,  # keep user's conversation in memory
+            chat_id=user_id,  # 让用户会话保持在内存中
             user_id=user_id,
             text=text,
             msg_type=inbound_type,
@@ -280,7 +298,7 @@ class WeComChannel(Channel):
             files=files or [],
             metadata={"aibotid": body.get("aibotid"), "chattype": body.get("chattype")},
         )
-        inbound.topic_id = user_id  # keep the same thread
+        inbound.topic_id = user_id  # 保持同一主题
 
         stream_id = generate_req_id("stream")
         self._ws_frames[msg_id] = frame
@@ -294,6 +312,7 @@ class WeComChannel(Channel):
         await self.bus.publish_inbound(inbound)
 
     async def _send_ws(self, msg: OutboundMessage, *, _max_retries: int = 3) -> None:
+        """通过 WebSocket 发送一条消息：优先复用 stream_id 续接，否则用 markdown 推送。"""
         if not self._ws_client:
             return
         try:
@@ -343,6 +362,7 @@ class WeComChannel(Channel):
         path: str,
         size: int,
     ) -> str | None:
+        """通过 aibot 的 WS 媒体上传协议（init/chunk/finish）上传文件，返回 ``media_id``。"""
         if not self._ws_client:
             return None
         try:

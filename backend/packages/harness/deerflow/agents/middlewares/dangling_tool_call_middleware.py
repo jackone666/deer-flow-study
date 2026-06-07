@@ -1,17 +1,10 @@
-"""Middleware to fix dangling tool calls in message history.
+"""用于修复消息历史中悬空 tool 调用的中间件。
 
-A dangling tool call occurs when an AIMessage contains tool_calls but there are
-no corresponding ToolMessages in the history (e.g., due to user interruption or
-request cancellation). This causes LLM errors due to incomplete message format.
-
-This middleware intercepts the model call to detect and patch such gaps by
-inserting synthetic ToolMessages with an error indicator immediately after the
-AIMessage that made the tool calls, ensuring correct message ordering.
-
-Note: Uses wrap_model_call instead of before_model to ensure patches are inserted
-at the correct positions (immediately after each dangling AIMessage), not appended
-to the end of the message list as before_model + add_messages reducer would do.
+    悬空 tool 调用指的是 AIMessage 中包含 tool_calls 但消息历史里没有对应的
+    ToolMessage（例如因用户中断或请求取消而发生），这会因消息格式不完整
+    而导致 LLM 报错。
 """
+
 
 import json
 import logging
@@ -33,23 +26,21 @@ _MAX_RECOVERY_ERROR_DETAIL_LEN = 500
 
 
 class DanglingToolCallMiddleware(AgentMiddleware[AgentState]):
-    """Inserts placeholder ToolMessages for dangling tool calls before model invocation.
+    """在模型调用前为悬空的工具调用插入占位 ToolMessage。
 
-    Scans the message history for AIMessages whose tool_calls lack corresponding
-    ToolMessages, and injects synthetic error responses immediately after the
-    offending AIMessage so the LLM receives a well-formed conversation.
+    扫描消息历史中 ``tool_calls`` 缺少对应 ``ToolMessage`` 的 ``AIMessage``，
+    并在异常 ``AIMessage`` 之后立即注入合成的错误响应，保证 LLM 收到的会话是良构的。
     """
 
     @staticmethod
     def _message_tool_calls(msg) -> list[dict]:
-        """Return normalized tool calls from structured fields or raw provider payloads.
+        """从结构化字段或原始提供方负载中返回归一化后的工具调用列表。
 
-        LangChain stores malformed provider function calls in ``invalid_tool_calls``.
-        They do not execute, but provider adapters may still serialize enough of
-        the call id/name back into the next request that strict OpenAI-compatible
-        validators expect a matching ToolMessage. Treat them as dangling calls so
-        the next model request stays well-formed and the model sees a recoverable
-        tool error instead of another provider 400.
+        LangChain 将畸形的提供方函数调用存放在 ``invalid_tool_calls`` 中。
+        这些调用不会执行，但提供方适配器仍可能在下一次请求中将 call id/name
+        序列化回去，使严格的 OpenAI 兼容校验器期待匹配的 ``ToolMessage``。
+        将其视作悬空调用，使下次模型请求保持良构，并让模型看到可恢复的工具
+        错误而非又一个提供方 400。
         """
         normalized: list[dict] = []
 
@@ -102,6 +93,7 @@ class DanglingToolCallMiddleware(AgentMiddleware[AgentState]):
 
     @staticmethod
     def _synthetic_tool_message_content(tool_call: dict) -> str:
+        """为缺失结果的 tool call 合成一个 ``ToolMessage`` 文案。"""
         if tool_call.get("invalid"):
             name = tool_call.get("name")
             error = tool_call.get("error")
@@ -126,10 +118,10 @@ class DanglingToolCallMiddleware(AgentMiddleware[AgentState]):
         return "[Tool call was interrupted and did not return a result.]"
 
     def _build_patched_messages(self, messages: list) -> list | None:
-        """Return messages with tool results grouped after their tool-call AIMessage.
+        """返回将工具结果归组到对应工具调用 AIMessage 之后的消息列表。
 
-        This normalizes model-bound causal order before provider serialization while
-        preserving already-valid transcripts unchanged.
+        在提供方序列化前对模型绑定的因果顺序进行归一化，同时保留原本
+        良构的会话不变。
         """
         tool_messages_by_id: dict[str, deque[ToolMessage]] = defaultdict(deque)
         for msg in messages:
@@ -188,6 +180,7 @@ class DanglingToolCallMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
+        """同步入口：先把悬空 tool call 修补好再调用下游 ``handler``。"""
         patched = self._build_patched_messages(request.messages)
         if patched is not None:
             request = request.override(messages=patched)
@@ -199,6 +192,7 @@ class DanglingToolCallMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
+        """异步入口：先把悬空 tool call 修补好再 ``await`` 下游 ``handler``。"""
         patched = self._build_patched_messages(request.messages)
         if patched is not None:
             request = request.override(messages=patched)

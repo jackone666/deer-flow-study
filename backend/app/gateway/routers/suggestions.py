@@ -1,3 +1,5 @@
+"""``/api/threads/{id}/suggestions`` 路由：基于历史对话生成后续问题建议。"""
+
 import json
 import logging
 
@@ -16,21 +18,28 @@ router = APIRouter(prefix="/api", tags=["suggestions"])
 
 
 class SuggestionMessage(BaseModel):
+    """用于生成建议提示词的对话消息条目。"""
+
     role: str = Field(..., description="Message role: user|assistant")
     content: str = Field(..., description="Message content as plain text")
 
 
 class SuggestionsRequest(BaseModel):
+    """生成后续问题建议的请求体。"""
+
     messages: list[SuggestionMessage] = Field(..., description="Recent conversation messages")
     n: int = Field(default=3, ge=1, le=5, description="Number of suggestions to generate")
     model_name: str | None = Field(default=None, description="Optional model override")
 
 
 class SuggestionsResponse(BaseModel):
+    """生成的后续问题建议列表响应模型。"""
+
     suggestions: list[str] = Field(default_factory=list, description="Suggested follow-up questions")
 
 
 def _strip_markdown_code_fence(text: str) -> str:
+    """去除包裹在 ```` ``` ```` 围栏中的内容。"""
     stripped = text.strip()
     if not stripped.startswith("```"):
         return stripped
@@ -41,6 +50,7 @@ def _strip_markdown_code_fence(text: str) -> str:
 
 
 def _parse_json_string_list(text: str) -> list[str] | None:
+    """从 LLM 输出中解析出字符串列表；解析失败返回 ``None``。"""
     candidate = _strip_markdown_code_fence(text)
     start = candidate.find("[")
     end = candidate.rfind("]")
@@ -65,6 +75,7 @@ def _parse_json_string_list(text: str) -> list[str] | None:
 
 
 def _extract_response_text(content: object) -> str:
+    """从 LLM 响应的 ``content`` 字段中抽取纯文本。"""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -83,6 +94,7 @@ def _extract_response_text(content: object) -> str:
 
 
 def _format_conversation(messages: list[SuggestionMessage]) -> str:
+    """把 ``SuggestionMessage`` 列表格式化为 ``User:``/``Assistant:`` 对话文本。"""
     parts: list[str] = []
     for m in messages:
         role = m.role.strip().lower()
@@ -108,6 +120,17 @@ async def generate_suggestions(
     request: Request,
     config: AppConfig = Depends(get_config),
 ) -> SuggestionsResponse:
+    """根据历史会话生成后续追问建议。
+
+    Args:
+        thread_id: 主题 ID，用于权限校验。
+        body: 包含最近若干条消息和建议数量的请求体。
+        request: FastAPI 请求对象（用于鉴权装饰器）。
+        config: 应用配置依赖项。
+
+    Returns:
+        SuggestionsResponse: 抽取出的建议列表（失败或空输入时返回空列表）。
+    """
     if not body.messages:
         return SuggestionsResponse(suggestions=[])
 

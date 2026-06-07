@@ -1,4 +1,5 @@
-"""Middleware for automatic thread title generation."""
+"""用于自动生成线程标题的中间件。"""
+
 
 import logging
 import re
@@ -21,22 +22,29 @@ logger = logging.getLogger(__name__)
 
 
 class TitleMiddlewareState(AgentState):
-    """Compatible with the `ThreadState` schema."""
+    """与 ``ThreadState`` 模式兼容的状态类型。"""
 
     title: NotRequired[str | None]
 
 
 class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
-    """Automatically generate a title for the thread after the first user message."""
+    """在首轮用户消息之后自动生成线程标题。"""
 
     state_schema = TitleMiddlewareState
 
     def __init__(self, *, app_config: "AppConfig | None" = None, title_config: "TitleConfig | None" = None):
+        """初始化标题中间件。
+
+        Args:
+            app_config: 可选的应用配置，便于测试或非默认配置注入。
+            title_config: 可选的显式标题配置；提供时优先于 ``app_config.title``。
+        """
         super().__init__()
         self._app_config = app_config
         self._title_config = title_config
 
     def _get_title_config(self):
+        """解析当前生效的标题配置，按显式 > app > 全局单例顺序查找。"""
         if self._title_config is not None:
             return self._title_config
         if self._app_config is not None:
@@ -44,6 +52,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return get_title_config()
 
     def _normalize_content(self, content: object) -> str:
+        """将结构化消息内容归一化为纯文本字符串。"""
         if isinstance(content, str):
             return content
 
@@ -64,10 +73,11 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     @staticmethod
     def _is_user_message_for_title(message: object) -> bool:
+        """判断消息是否可作为标题生成所用的真实用户消息。"""
         return getattr(message, "type", None) == "human" and not is_dynamic_context_reminder(message)
 
     def _should_generate_title(self, state: TitleMiddlewareState) -> bool:
-        """Check if we should generate a title for this thread."""
+        """判断是否应当为当前线程生成标题。"""
         config = self._get_title_config()
         if not config.enabled:
             return False
@@ -89,9 +99,11 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return len(user_messages) == 1 and len(assistant_messages) >= 1
 
     def _build_title_prompt(self, state: TitleMiddlewareState) -> tuple[str, str]:
-        """Extract user/assistant messages and build the title prompt.
+        """提取用户/助手消息并构建标题生成提示。
 
-        Returns (prompt_string, user_msg) so callers can use user_msg as fallback.
+        Returns:
+            ``(prompt_string, user_msg)`` 元组，调用方可使用 ``user_msg``
+            作为回退。
         """
         config = self._get_title_config()
         messages = state.get("messages", [])
@@ -110,11 +122,11 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return prompt, user_msg
 
     def _strip_think_tags(self, text: str) -> str:
-        """Remove <think>...</think> blocks emitted by reasoning models (e.g. minimax, DeepSeek-R1)."""
+        """移除推理模型（例如 minimax、DeepSeek-R1）输出的 ``<think>...</think>`` 块。"""
         return re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
 
     def _parse_title(self, content: object) -> str:
-        """Normalize model output into a clean title string."""
+        """将模型输出归一化为干净的标题字符串。"""
         config = self._get_title_config()
         title_content = self._normalize_content(content)
         title_content = self._strip_think_tags(title_content)
@@ -122,6 +134,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return title[: config.max_chars] if len(title) > config.max_chars else title
 
     def _fallback_title(self, user_msg: str) -> str:
+        """执行赋值。"""
         config = self._get_title_config()
         fallback_chars = min(config.max_chars, 50)
         if len(user_msg) > fallback_chars:
@@ -129,10 +142,10 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return user_msg if user_msg else "New Conversation"
 
     def _get_runnable_config(self) -> dict[str, Any]:
-        """Inherit the parent RunnableConfig and add middleware tag.
+        """继承父级 ``RunnableConfig`` 并附加中间件标签。
 
-        This ensures RunJournal identifies LLM calls from this middleware
-        as ``middleware:title`` instead of ``lead_agent``.
+        确保 ``RunJournal`` 将本中间件的 LLM 调用识别为 ``middleware:title``
+        而非 ``lead_agent``。
         """
         try:
             parent = get_config()
@@ -144,7 +157,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return config
 
     def _generate_title_result(self, state: TitleMiddlewareState) -> dict | None:
-        """Generate a local fallback title without blocking on an LLM call."""
+        """生成本地回退标题，避免阻塞在 LLM 调用上。"""
         if not self._should_generate_title(state):
             return None
 
@@ -152,7 +165,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return {"title": self._fallback_title(user_msg)}
 
     async def _agenerate_title_result(self, state: TitleMiddlewareState) -> dict | None:
-        """Generate a title asynchronously and fall back locally on failure."""
+        """异步生成标题，在失败时回退到本地生成的标题。"""
         if not self._should_generate_title(state):
             return None
 
@@ -181,8 +194,10 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     @override
     def after_model(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
+        """模型调用后同步钩子。"""
         return self._generate_title_result(state)
 
     @override
     async def aafter_model(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
+        """模型调用后异步钩子。"""
         return await self._agenerate_title_result(state)

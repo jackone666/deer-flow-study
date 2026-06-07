@@ -1,16 +1,15 @@
-"""Background agent execution.
+"""后台 Agent 执行。
 
-Runs an agent graph inside an ``asyncio.Task``, publishing events to
-a :class:`StreamBridge` as they are produced.
+在 ``asyncio.Task`` 内运行 Agent 图，把产生的事件发布到
+:class:`StreamBridge`。
 
-Uses ``graph.astream(stream_mode=[...])`` which gives correct full-state
-snapshots for ``values`` mode, proper ``{node: writes}`` for ``updates``,
-and ``(chunk, metadata)`` tuples for ``messages`` mode.
+使用 ``graph.astream(stream_mode=[...])``：``values`` 模式拿到完整状态
+快照，``updates`` 拿到 ``{node: writes}``，``messages`` 拿到
+``(chunk, metadata)`` 元组。
 
-Note: ``events`` mode is not supported through the gateway — it requires
-``graph.astream_events()`` which cannot simultaneously produce ``values``
-snapshots.  The JS open-source LangGraph API server works around this via
-internal checkpoint callbacks that are not exposed in the Python public API.
+注意：gateway 路径不支持 ``events`` 模式——它需要 ``astream_events``，
+而后者无法同时产出 ``values`` 快照。开源 JS 版 LangGraph API server 通过
+未公开的 Python checkpoint 回调规避了这一点。
 """
 
 from __future__ import annotations
@@ -51,17 +50,25 @@ def _build_runtime_context(
     caller_context: Any | None,
     app_config: AppConfig | None = None,
 ) -> dict[str, Any]:
-    """Build the dict that becomes ``ToolRuntime.context`` for the run.
+    """构造将作为 ``ToolRuntime.context`` 暴露的字典。
 
-    Always includes ``thread_id`` and ``run_id``. Additional keys from the caller's
-    ``config['context']`` (e.g. ``agent_name`` for the bootstrap flow — issue #2677)
-    are merged in but never override ``thread_id``/``run_id``. The resolved
-    ``AppConfig`` is added by the worker so tools can consume it without ambient
-    global lookups.
+    始终包含 ``thread_id`` 与 ``run_id``；调用方 ``config['context']``
+    中携带的其他键（如 bootstrap 流程里的 ``agent_name``——issue #2677）
+    会被合并进来，但绝不会覆盖 ``thread_id``/``run_id``。已解析的
+    :class:`AppConfig` 由 worker 注入，让工具无需做全局查找即可读取。
 
-    langgraph 1.1+ surfaces this as ``runtime.context`` via the parent runtime stored
-    under ``config['configurable']['__pregel_runtime']`` — see
-    ``langgraph.pregel.main`` where ``parent_runtime.merge(...)`` is invoked.
+    langgraph 1.1+ 通过存放在 ``config['configurable']['__pregel_runtime']``
+    的父 runtime 将其暴露为 ``runtime.context``——见
+    ``langgraph.pregel.main`` 中 ``parent_runtime.merge(...)`` 的调用。
+
+    Args:
+        thread_id: 当前线程 ID。
+        run_id: 当前 Run ID。
+        caller_context: 调用方 ``config['context']``（可空）。
+        app_config: 解析后的全局 AppConfig（可空）。
+
+    Returns:
+        合并后的运行时上下文字典。
     """
     runtime_ctx: dict[str, Any] = {"thread_id": thread_id, "run_id": run_id}
     if isinstance(caller_context, dict):
@@ -74,11 +81,15 @@ def _build_runtime_context(
 
 @dataclass(frozen=True)
 class RunContext:
-    """Infrastructure dependencies for a single agent run.
+    """单个 Agent Run 所需的基础设施依赖集合。
 
-    Groups checkpointer, store, and persistence-related singletons so that
-    ``run_agent`` (and any future callers) receive one object instead of a
-    growing list of keyword arguments.
+    Attributes:
+        checkpointer: LangGraph Checkpointer。
+        store: LangGraph Store（可空）。
+        event_store: :class:`RunEventStore`（可空）。
+        run_events_config: RunEvent 相关配置。
+        thread_store: 线程元数据存储。
+        app_config: 全局 AppConfig。
     """
 
     checkpointer: Any
@@ -90,6 +101,11 @@ class RunContext:
 
 
 def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> None:
+    """把运行时上下文安装到 LangGraph 的 ``config['context']`` 中。
+
+    如果已有 ``context`` 字典，则以 ``setdefault`` 方式注入关键字段；
+    否则直接用运行时上下文替换。``app_config`` 始终以最新值为准。
+    """
     existing_context = config.get("context")
     if isinstance(existing_context, dict):
         existing_context.setdefault("thread_id", runtime_context["thread_id"])
@@ -102,6 +118,7 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
 
 
 def _compute_agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    """直接判断 ``agent_factory`` 是否支持 ``app_config`` 关键字。"""
     try:
         return "app_config" in inspect.signature(agent_factory).parameters
     except (TypeError, ValueError):
@@ -110,10 +127,12 @@ def _compute_agent_factory_supports_app_config(agent_factory: Any) -> bool:
 
 @lru_cache(maxsize=128)
 def _cached_agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    """``_compute_agent_factory_supports_app_config`` 的 LRU 缓存版本。"""
     return _compute_agent_factory_supports_app_config(agent_factory)
 
 
 def _agent_factory_supports_app_config(agent_factory: Any) -> bool:
+    """通过 LRU 缓存判断 ``agent_factory`` 是否接受 ``app_config`` 参数。"""
     try:
         return _cached_agent_factory_supports_app_config(agent_factory)
     except TypeError:
@@ -135,7 +154,21 @@ async def run_agent(
     interrupt_before: list[str] | Literal["*"] | None = None,
     interrupt_after: list[str] | Literal["*"] | None = None,
 ) -> None:
-    """Execute an agent in the background, publishing events to *bridge*."""
+    """在后台执行 Agent 并把事件发布到 *bridge*。
+
+    Args:
+        bridge: 接收流式事件的 :class:`StreamBridge`。
+        run_manager: 用于更新 Run 状态的 :class:`RunManager`。
+        record: 当前 :class:`RunRecord`。
+        ctx: 包含 checkpointer/store/event_store 等依赖的 :class:`RunContext`。
+        agent_factory: 构造 Agent 图的可调用对象。
+        graph_input: 传给图的初始输入。
+        config: LangGraph ``RunnableConfig``（会被原地修改以注入 runtime context）。
+        stream_modes: 客户端请求的流式模式列表。
+        stream_subgraphs: 是否把子图也作为独立命名空间产出。
+        interrupt_before: 指定的节点在执行前中断（用于人工审批）。
+        interrupt_after: 指定的节点在执行后中断。
+    """
 
     # Unpack infrastructure dependencies from RunContext.
     checkpointer = ctx.checkpointer
@@ -443,7 +476,7 @@ async def run_agent(
 
 
 async def _call_checkpointer_method(checkpointer: Any, async_name: str, sync_name: str, *args: Any, **kwargs: Any) -> Any:
-    """Call a checkpointer method, supporting async and sync variants."""
+    """调用一个 checkpointer 方法，同时支持异步与同步变体。"""
     method = getattr(checkpointer, async_name, None) or getattr(checkpointer, sync_name, None)
     if method is None:
         raise AttributeError(f"Missing checkpointer method: {async_name}/{sync_name}")
@@ -462,7 +495,7 @@ async def _rollback_to_pre_run_checkpoint(
     pre_run_snapshot: dict[str, Any] | None,
     snapshot_capture_failed: bool,
 ) -> None:
-    """Restore thread state to the checkpoint snapshot captured before run start."""
+    """把线程状态恢复到 Run 启动前捕获的检查点快照。"""
     if checkpointer is None:
         logger.info("Run %s rollback requested but no checkpointer is configured", run_id)
         return
@@ -547,23 +580,30 @@ async def _rollback_to_pre_run_checkpoint(
 
 
 def _new_checkpoint_marker() -> dict[str, str]:
+    """生成一个全新的检查点 ``id``/``ts`` 标记，避免与历史检查点冲突。"""
     marker = empty_checkpoint()
     return {"id": marker["id"], "ts": marker["ts"]}
 
 
 def _lg_mode_to_sse_event(mode: str) -> str:
-    """Map LangGraph internal stream_mode name to SSE event name.
+    """把 LangGraph 内部 ``stream_mode`` 名映射为 SSE 事件名。
 
-    LangGraph's ``astream(stream_mode="messages")`` produces message
-    tuples.  The SSE protocol calls this ``messages-tuple`` when the
-    client explicitly requests it, but the default SSE event name used
-    by LangGraph Platform is simply ``"messages"``.
+    LangGraph 的 ``astream(stream_mode="messages")`` 产出 message 元组。
+    客户端显式请求时 SSE 协议会叫它 ``"messages-tuple"``，但 LangGraph
+    Platform 默认的 SSE 事件名是 ``"messages"``。
+
+    Args:
+        mode: LangGraph 的 stream_mode 名。
+
+    Returns:
+        与 SSE 协议约定一致的事件名。
     """
     # All LG modes map 1:1 to SSE event names — "messages" stays "messages"
     return mode
 
 
 def _error_fallback_message_from_metadata(metadata: dict[str, Any], content: Any) -> str:
+    """从 ``deerflow_error_fallback`` 上下文中抽取可读错误信息。"""
     detail = metadata.get("error_detail")
     if isinstance(detail, str) and detail.strip():
         return detail.strip()
@@ -576,7 +616,7 @@ def _error_fallback_message_from_metadata(metadata: dict[str, Any], content: Any
 
 
 def _try_extract_from_message(obj: Any) -> str | None:
-    """Try to extract fallback marker from a single message object or dict."""
+    """尝试从单个消息对象或 dict 中抽取 ``deerflow_error_fallback`` 标记。"""
     additional_kwargs = getattr(obj, "additional_kwargs", None)
     if isinstance(additional_kwargs, dict) and additional_kwargs.get("deerflow_error_fallback"):
         return _error_fallback_message_from_metadata(additional_kwargs, getattr(obj, "content", None))
@@ -589,10 +629,16 @@ def _try_extract_from_message(obj: Any) -> str | None:
 
 
 def _extract_llm_error_fallback_message(value: Any) -> str | None:
-    """Find LLM fallback markers in streamed LangGraph chunks.
+    """在流式 LangGraph chunk 中查找 LLM fallback 标记。
 
-    Error fallback messages returned by model-call middleware are not guaranteed
-    to pass through LLM end callbacks, but they do appear in graph state chunks.
+    模型调用中间件返回的错误回退消息并不保证经过 ``on_llm_end`` 回调，
+    但会出现在 graph state chunk 中。
+
+    Args:
+        value: 单个流式 chunk。
+
+    Returns:
+        找到时返回错误描述，否则 ``None``。
     """
     # Fast path: large state chunks produced by stream_mode="values" have a
     # top-level "messages" list. Scanning only that list avoids expensive deep
@@ -616,6 +662,14 @@ def _extract_llm_error_fallback_message(value: Any) -> str | None:
     seen: set[int] = set()
 
     def walk(obj: Any) -> str | None:
+        """执行赋值。
+        
+                Args:
+                    obj: Any: 参数说明。
+        
+                Returns:
+                    str | None。
+        """
         oid = id(obj)
         if oid in seen:
             return None
@@ -643,10 +697,16 @@ def _extract_llm_error_fallback_message(value: Any) -> str | None:
 
 
 def _extract_human_message(graph_input: dict) -> HumanMessage | None:
-    """Extract or construct a HumanMessage from graph_input for event recording.
+    """从 ``graph_input`` 中抽取或构造一个 :class:`HumanMessage`，用于事件记录。
 
-    Returns a LangChain HumanMessage so callers can use .model_dump() to get
-    the checkpoint-aligned serialization format.
+    返回 LangChain :class:`HumanMessage`，方便调用方通过 ``.model_dump()``
+    获得与 checkpoint 对齐的序列化格式。
+
+    Args:
+        graph_input: 传给图执行的初始输入。
+
+    Returns:
+        抽取得到的消息；若找不到有效内容则返回 ``None``。
     """
     from langchain_core.messages import HumanMessage
 
@@ -672,9 +732,15 @@ def _unpack_stream_item(
     lg_modes: list[str],
     stream_subgraphs: bool,
 ) -> tuple[str | None, Any]:
-    """Unpack a multi-mode or subgraph stream item into (mode, chunk).
+    """把多模式或子图流式 item 解包为 ``(mode, chunk)``。
 
-    Returns ``(None, None)`` if the item cannot be parsed.
+    Args:
+        item: ``astream`` 产出的单个流式条目。
+        lg_modes: 当前请求的 LangGraph 模式列表。
+        stream_subgraphs: 是否启用了子图流式。
+
+    Returns:
+        ``(mode, chunk)``；无法解析时返回 ``(None, None)``。
     """
     if stream_subgraphs:
         if isinstance(item, tuple) and len(item) == 3:

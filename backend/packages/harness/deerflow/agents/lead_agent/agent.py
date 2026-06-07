@@ -1,21 +1,19 @@
-"""Lead agent factory.
+"""Lead Agent 工厂。
 
-INVARIANT — tracing callback placement
+不变量 —— 追踪回调的挂载位置
 ======================================
 
-Tracing callbacks (Langfuse, LangSmith) are attached at the **graph
-invocation root** in :func:`_make_lead_agent` (see the
-``build_tracing_callbacks()`` block that appends to ``config["callbacks"]``).
-Every ``create_chat_model(...)`` call inside this module — and inside any
-middleware reachable from this graph (e.g. ``TitleMiddleware``) — MUST pass
-``attach_tracing=False``.
+追踪回调（Langfuse、LangSmith）由 :func:`_make_lead_agent` 在 **图调用根** 注入
+（参见向 ``config["callbacks"]`` 追加 ``build_tracing_callbacks()`` 的代码块）。
+本模块中——以及任何可被该图触达的中间件（例如 ``TitleMiddleware``）——
+所有的 ``create_chat_model(...)`` 调用都必须传入 ``attach_tracing=False``。
 
-Forgetting that flag emits duplicate spans (one rooted at the graph, one at
-the model) AND prevents the Langfuse handler's ``propagate_attributes``
-path from firing, so ``session_id`` / ``user_id`` never reach the trace.
-The four current sites are: bootstrap agent, default agent, summarization
-middleware, and the async path inside ``TitleMiddleware``. Any new in-graph
-``create_chat_model`` call must add to this list and pass the flag.
+若忘记该参数，会产生重复的 span（一个挂在图根、一个挂在模型），
+同时 Langfuse 处理器的 ``propagate_attributes`` 路径无法触发，导致
+``session_id`` / ``user_id`` 永远无法写入 trace。
+当前共四个相关调用点：bootstrap agent、默认 agent、summarization 中间件，
+以及 ``TitleMiddleware`` 内部的 async 路径。任何新的图内 ``create_chat_model``
+调用都必须加入此列表并传入该参数。
 """
 
 from __future__ import annotations
@@ -57,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_runtime_config(config: RunnableConfig) -> dict:
-    """Merge legacy configurable options with LangGraph runtime context."""
+    """合并旧的 ``configurable`` 配置项与 LangGraph 运行期 context。"""
     cfg = dict(config.get("configurable", {}) or {})
     context = config.get("context", {}) or {}
     if isinstance(context, dict):
@@ -66,7 +64,7 @@ def _get_runtime_config(config: RunnableConfig) -> dict:
 
 
 def _resolve_model_name(requested_model_name: str | None = None, *, app_config: AppConfig | None = None) -> str:
-    """Resolve a runtime model name safely, falling back to default if invalid. Returns None if no models are configured."""
+    """安全地解析运行期模型名，若名称无效则回退到默认。若未配置模型则抛出异常。"""
     app_config = app_config or get_app_config()
     default_model_name = app_config.models[0].name if app_config.models else None
     if default_model_name is None:
@@ -81,7 +79,7 @@ def _resolve_model_name(requested_model_name: str | None = None, *, app_config: 
 
 
 def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> DeerFlowSummarizationMiddleware | None:
-    """Create and configure the summarization middleware from config."""
+    """根据配置创建并配置摘要中间件。"""
     resolved_app_config = app_config or get_app_config()
     config = resolved_app_config.summarization
 
@@ -147,13 +145,13 @@ def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> 
 
 
 def _create_todo_list_middleware(is_plan_mode: bool) -> TodoMiddleware | None:
-    """Create and configure the TodoList middleware.
+    """创建并配置 TodoList 中间件。
 
     Args:
-        is_plan_mode: Whether to enable plan mode with TodoList middleware.
+        is_plan_mode: 是否启用计划模式及其 TodoList 中间件。
 
     Returns:
-        TodoMiddleware instance if plan mode is enabled, None otherwise.
+        启用计划模式时返回 ``TodoMiddleware`` 实例，否则返回 ``None``。
     """
     if not is_plan_mode:
         return None
@@ -280,15 +278,18 @@ def _build_middlewares(
     app_config: AppConfig | None = None,
     deferred_setup=None,
 ):
-    """Build middleware chain based on runtime configuration.
+    """根据运行期配置构建中间件链。
 
     Args:
-        config: Runtime configuration containing configurable options like is_plan_mode.
-        agent_name: If provided, MemoryMiddleware will use per-agent memory storage.
-        custom_middlewares: Optional list of custom middlewares to inject into the chain.
+        config: 运行期配置，包含 ``is_plan_mode`` 等可配置项。
+        model_name: 已解析的模型名称，用于判断是否启用视觉相关中间件。
+        agent_name: 若提供，``MemoryMiddleware`` 将按 Agent 隔离存储记忆。
+        custom_middlewares: 可选，注入到链中的自定义中间件列表。
+        app_config: 可选的应用配置对象，便于测试或非默认配置注入。
+        deferred_setup: 可选的延迟工具集合元数据。
 
     Returns:
-        List of middleware instances.
+        按顺序排列的中间件实例列表。
     """
     resolved_app_config = app_config or get_app_config()
     middlewares = build_lead_runtime_middlewares(app_config=resolved_app_config, lazy_init=True)
@@ -365,12 +366,11 @@ def _build_middlewares(
 
 
 def _assemble_deferred(filtered_tools: list[BaseTool], *, enabled: bool) -> tuple[list[BaseTool], DeferredToolSetup]:
-    """Build the final tool list + deferred setup from a policy-filtered list.
+    """在工具策略过滤之后构建最终工具列表与延迟工具集合。
 
-    Call AFTER tool-policy filtering so the deferred catalog never exposes a
-    tool the agent is not allowed to use. Fail-closed: if tool_search is enabled
-    and MCP tools survived filtering but no deferred set was recovered, raise
-    rather than silently binding their full schemas to the model.
+    必须在工具策略过滤之后调用，避免延迟目录暴露 Agent 无权使用的工具。
+    采用“失败即停”策略：当 ``tool_search`` 启用且存在 MCP 工具幸存于过滤，
+    但未恢复出延迟集合时，抛错而不是将完整 schema 静默绑定给模型。
     """
     from deerflow.tools.builtins.tool_search import build_deferred_tool_setup
     from deerflow.tools.mcp_metadata import is_mcp_tool
@@ -385,6 +385,7 @@ def _assemble_deferred(filtered_tools: list[BaseTool], *, enabled: bool) -> tupl
 
 
 def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
+    """内部辅助方法。"""
     if is_bootstrap:
         return {"bootstrap"}
     if agent_config and agent_config.skills is not None:
@@ -393,6 +394,7 @@ def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
 
 
 def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, app_config: AppConfig) -> list[Skill]:
+    """内部辅助方法。"""
     try:
         from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
 
@@ -407,7 +409,7 @@ def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, a
 
 
 def make_lead_agent(config: RunnableConfig):
-    """LangGraph graph factory; keep the signature compatible with LangGraph Server."""
+    """LangGraph 图工厂；保持与 LangGraph Server 兼容的签名。"""
     runtime_config = _get_runtime_config(config)
     runtime_app_config = runtime_config.get("app_config")
     return _make_lead_agent(config, app_config=runtime_app_config or get_app_config())
@@ -415,6 +417,7 @@ def make_lead_agent(config: RunnableConfig):
 
 def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     # Lazy import to avoid circular dependency
+    """内部辅助方法。"""
     from deerflow.tools import get_available_tools
     from deerflow.tools.builtins import setup_agent, update_agent
 

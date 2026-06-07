@@ -1,4 +1,4 @@
-"""Cache for MCP tools to avoid repeated loading."""
+"""MCP 工具缓存:避免重复加载并感知配置文件变更。"""
 
 import asyncio
 import logging
@@ -15,10 +15,10 @@ _config_mtime: float | None = None  # Track config file modification time
 
 
 def _get_config_mtime() -> float | None:
-    """Get the modification time of the extensions config file.
+    """读取 extensions 配置文件修改时间。
 
     Returns:
-        The modification time as a float, or None if the file doesn't exist.
+        浮点 mtime;文件不存在时返回 None。
     """
     from deerflow.config.extensions_config import ExtensionsConfig
 
@@ -29,10 +29,10 @@ def _get_config_mtime() -> float | None:
 
 
 def _is_cache_stale() -> bool:
-    """Check if the cache is stale due to config file changes.
+    """判断缓存是否因配置文件变更而过期。
 
     Returns:
-        True if the cache should be invalidated, False otherwise.
+        True 表示需要重新加载,False 表示仍然有效。
     """
     global _config_mtime
 
@@ -54,12 +54,12 @@ def _is_cache_stale() -> bool:
 
 
 async def initialize_mcp_tools() -> list[BaseTool]:
-    """Initialize and cache MCP tools.
+    """初始化并缓存 MCP 工具。
 
-    This should be called once at application startup.
+    应当只在应用启动时调用一次。
 
     Returns:
-        List of LangChain tools from all enabled MCP servers.
+        所有已启用 MCP 服务器加载出的 LangChain 工具列表。
     """
     global _mcp_tools_cache, _cache_initialized, _config_mtime
 
@@ -80,17 +80,13 @@ async def initialize_mcp_tools() -> list[BaseTool]:
 
 
 def get_cached_mcp_tools() -> list[BaseTool]:
-    """Get cached MCP tools with lazy initialization.
+    """获取缓存的 MCP 工具,未初始化时自动懒加载。
 
-    If tools are not initialized, automatically initializes them.
-    This ensures MCP tools work in both FastAPI and LangGraph Studio contexts.
-
-    Also checks if the config file has been modified since last initialization,
-    and re-initializes if needed. This ensures that changes made through the
-    Gateway API are reflected in the Gateway-embedded LangGraph runtime.
+    同时会检查配置文件自上次初始化以来是否被修改,如有变更会重新初始化,
+    保证 Gateway API 改动的 MCP 配置能立即在 Gateway 内嵌的 LangGraph 运行时中生效。
 
     Returns:
-        List of cached MCP tools.
+        缓存中的 MCP 工具列表。
     """
     global _cache_initialized
 
@@ -130,11 +126,9 @@ def get_cached_mcp_tools() -> list[BaseTool]:
 
 
 def reset_mcp_tools_cache() -> None:
-    """Reset the MCP tools cache.
+    """重置 MCP 工具缓存,常用于测试或希望重新加载 MCP 工具的场景。
 
-    This is useful for testing or when you want to reload MCP tools.
-    Also closes all persistent MCP sessions so they are recreated on
-    the next tool load.
+    同时会关闭所有持久 MCP 会话,使其在下一次工具加载时按最新连接配置重建。
     """
     global _mcp_tools_cache, _cache_initialized, _config_mtime
     _mcp_tools_cache = None

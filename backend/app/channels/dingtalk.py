@@ -1,4 +1,4 @@
-"""DingTalk channel implementation."""
+"""钉钉渠道实现。"""
 
 from __future__ import annotations
 
@@ -30,9 +30,9 @@ _MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024
 
 
 def _normalize_conversation_type(raw: Any) -> str:
-    """Normalize ``conversationType`` to ``"1"`` (P2P) or ``"2"`` (group).
+    """将 ``conversationType`` 归一化为 ``"1"``（单聊）或 ``"2"``（群聊）。
 
-    Stream payloads may send int or string values.
+    流式负载里该字段可能为 int 或 str。
     """
     if raw is None:
         return _CONVERSATION_TYPE_P2P
@@ -43,6 +43,7 @@ def _normalize_conversation_type(raw: Any) -> str:
 
 
 def _normalize_allowed_users(allowed_users: Any) -> set[str]:
+    """把 ``allowed_users`` 规范化为钉钉 staff id 集合，类型不对时打印警告。"""
     if allowed_users is None:
         return set()
     if isinstance(allowed_users, str):
@@ -59,12 +60,14 @@ def _normalize_allowed_users(allowed_users: Any) -> set[str]:
 
 
 def _is_dingtalk_command(text: str) -> bool:
+    """判断文本是否以已知斜杠命令开头。"""
     if not text.startswith("/"):
         return False
     return text.split(maxsplit=1)[0].lower() in KNOWN_CHANNEL_COMMANDS
 
 
 def _extract_text_from_rich_text(rich_text_list: list) -> str:
+    """从钉钉富文本列表中抽取所有 ``text`` 字段并以空格连接。"""
     parts: list[str] = []
     for item in rich_text_list:
         if isinstance(item, dict) and "text" in item:
@@ -79,16 +82,17 @@ _TABLE_SEPARATOR_RE = re.compile(r"^\|[-:| ]+\|$", re.MULTILINE)
 
 
 def _convert_markdown_table(text: str) -> str:
-    # DingTalk sampleMarkdown does not render pipe-delimited tables.
+    """把 Markdown 表格转成钉钉 sampleMarkdown 可渲染的引用块。"""
+    # DingTalk sampleMarkdown 不会渲染由竖线分隔的表格。
     lines = text.split("\n")
     result: list[str] = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        # Detect table: header row followed by separator row
+        # 检测表格：表头行后紧跟分隔行
         if i + 1 < len(lines) and line.strip().startswith("|") and _TABLE_SEPARATOR_RE.match(lines[i + 1].strip()):
             headers = [h.strip() for h in line.strip().strip("|").split("|")]
-            i += 2  # skip header + separator
+            i += 2  # 跳过表头 + 分隔行
             while i < len(lines) and lines[i].strip().startswith("|"):
                 cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
                 for h, c in zip(headers, cells):
@@ -102,9 +106,10 @@ def _convert_markdown_table(text: str) -> str:
 
 
 def _adapt_markdown_for_dingtalk(text: str) -> str:
-    """Adapt markdown for DingTalk's limited sampleMarkdown renderer."""
+    """将 Markdown 转换为钉钉 sampleMarkdown 渲染器能识别的子集。"""
 
     def _code_block_to_quote(match: re.Match) -> str:
+        """把 Markdown 代码块改写成引用块。"""
         lang = match.group(1)
         code = match.group(2).rstrip("\n")
         prefix = f"> **{lang}**\n" if lang else ""
@@ -119,9 +124,15 @@ def _adapt_markdown_for_dingtalk(text: str) -> str:
 
 
 class DingTalkChannel(Channel):
-    """DingTalk IM channel using Stream Push (WebSocket, no public IP needed)."""
+    """基于 Stream Push（WebSocket，免公网 IP）的钉钉 IM 渠道。"""
 
     def __init__(self, bus: MessageBus, config: dict[str, Any]) -> None:
+        """初始化钉钉渠道，从配置中读取凭据、卡片模板和允许用户等。
+
+        Args:
+            bus: 共享消息总线。
+            config: 渠道配置字典，键见模块注释。
+        """
         super().__init__(name="dingtalk", bus=bus, config=config)
         self._thread: threading.Thread | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
@@ -141,9 +152,11 @@ class DingTalkChannel(Channel):
 
     @property
     def supports_streaming(self) -> bool:
+        """是否启用 AI Card 流式模式。"""
         return bool(self._card_template_id)
 
     async def start(self) -> None:
+        """启动渠道：检查依赖、获取主循环、订阅总线并启动 Stream Push 线程。"""
         if self._running:
             return
 
@@ -179,6 +192,7 @@ class DingTalkChannel(Channel):
         logger.info("DingTalk channel started")
 
     async def stop(self) -> None:
+        """停止渠道：解绑订阅、关闭流客户端、清理状态、等待线程结束。"""
         self._running = False
         self.bus.unsubscribe_outbound(self._on_outbound)
 
@@ -202,9 +216,9 @@ class DingTalkChannel(Channel):
         logger.info("DingTalk channel stopped")
 
     def _resolve_routing(self, msg: OutboundMessage) -> tuple[str, str, str]:
-        """Return (conversation_type, sender_staff_id, conversation_id).
+        """返回 ``(conversation_type, sender_staff_id, conversation_id)``。
 
-        Uses msg.chat_id as the primary routing key; metadata as fallback.
+        优先使用 ``msg.chat_id`` 作为路由键，元数据作为回退。
         """
         conversation_type = _normalize_conversation_type(msg.metadata.get("conversation_type"))
         sender_staff_id = msg.metadata.get("sender_staff_id", "")
@@ -216,15 +230,24 @@ class DingTalkChannel(Channel):
         return conversation_type, sender_staff_id, conversation_id
 
     async def send(self, msg: OutboundMessage, *, _max_retries: int = 3) -> None:
+        """向钉钉发送一条出站消息。
+
+        在 AI Card 模式下优先复用已有卡片流式更新；否则用 sampleMarkdown
+        发送，带指数退避重试。
+
+        Args:
+            msg: 待发送的出站消息。
+            _max_retries: sampleMarkdown 模式下的最大重试次数。
+        """
         conversation_type, sender_staff_id, conversation_id = self._resolve_routing(msg)
         robot_code = self._client_id
 
-        # Card mode: stream update to existing AI card
+        # 卡片模式：流式更新现有 AI 卡片
         source_key = self._make_card_source_key_from_outbound(msg)
         out_track_id = self._card_track_ids.get(source_key)
 
-        # ``card_template_id`` enables ``runs.stream`` (non-final + final outbounds).
-        # If card creation failed, skip non-final chunks to avoid duplicate messages.
+        # 启用 ``card_template_id`` 时支持 ``runs.stream``（非最终 + 最终出站）。
+        # 如果卡片创建失败，则跳过非最终片段以避免重复消息。
         if self._card_template_id and not out_track_id and not msg.is_final:
             return
 
@@ -247,7 +270,7 @@ class DingTalkChannel(Channel):
                 self._card_repliers.pop(out_track_id, None)
             return
 
-        # Non-card mode: send sampleMarkdown with retry
+        # 非卡片模式：使用 sampleMarkdown 发送，附带重试
         last_exc: Exception | None = None
         for attempt in range(_max_retries):
             try:
@@ -282,6 +305,7 @@ class DingTalkChannel(Channel):
         conversation_id: str,
         text: str,
     ) -> None:
+        """卡片流失败后的 sampleMarkdown 回退。"""
         try:
             if conversation_type == _CONVERSATION_TYPE_GROUP:
                 await self._send_group_message(robot_code, conversation_id, text)
@@ -292,6 +316,11 @@ class DingTalkChannel(Channel):
             raise
 
     async def send_file(self, msg: OutboundMessage, attachment: ResolvedAttachment) -> bool:
+        """将单个文件附件上传并发送给用户或群聊。
+
+        Returns:
+            bool: 成功返回 ``True``，否则 ``False``（含大小超限等）。
+        """
         if attachment.size > _MAX_UPLOAD_SIZE_BYTES:
             logger.warning("[DingTalk] file too large (%d bytes), skipping: %s", attachment.size, attachment.filename)
             return False
@@ -349,9 +378,10 @@ class DingTalkChannel(Channel):
             logger.exception("[DingTalk] failed to send file: %s", attachment.filename)
             return False
 
-    # -- stream client (runs in dedicated thread) --------------------------
+    # -- 流客户端（运行在专用线程中） ----------------------------------------
 
     def _run_stream(self, client_id: str, client_secret: str) -> None:
+        """在独立线程中运行钉钉 Stream Push 客户端。"""
         try:
             import dingtalk_stream
 
@@ -370,6 +400,7 @@ class DingTalkChannel(Channel):
             self._stream_client = None
 
     def _on_chatbot_message(self, message: Any) -> None:
+        """处理一条机器人聊天消息并发布到消息总线。"""
         if not self._running:
             return
         try:
@@ -402,11 +433,11 @@ class DingTalkChannel(Channel):
             else:
                 msg_type = InboundMessageType.CHAT
 
-            # P2P: topic_id=None (single thread per user, like Telegram private chat)
-            # Group: topic_id=msg_id (each new message starts a new topic, like Feishu)
+            # P2P: topic_id=None（每个用户单一主题，类似 Telegram 私聊）
+            # Group: topic_id=msg_id（每条消息开始一个新主题，类似飞书）
             topic_id: str | None = msg_id if conversation_type == _CONVERSATION_TYPE_GROUP else None
 
-            # chat_id uses conversation_id for groups, sender_staff_id for P2P
+            # chat_id：群聊用 conversation_id，P2P 用 sender_staff_id
             chat_id = conversation_id if conversation_type == _CONVERSATION_TYPE_GROUP else sender_staff_id
 
             inbound = self._make_inbound(
@@ -444,6 +475,7 @@ class DingTalkChannel(Channel):
 
     @staticmethod
     def _extract_text(message: Any) -> str:
+        """从钉钉消息对象抽取纯文本。"""
         msg_type = message.message_type
         if msg_type == "text" and message.text:
             return message.text.content.strip()
@@ -452,12 +484,14 @@ class DingTalkChannel(Channel):
         return ""
 
     async def _prepare_inbound(self, chat_id: str, inbound: InboundMessage) -> None:
-        # Running reply must finish before publish_inbound so AI card tracks are
-        # registered before the manager emits streaming outbounds.
+        """在发布入站消息前先发送“正在处理”回复。"""
+        # 必须先发完 running reply 再 publish_inbound，保证 AI card track
+        # 在调度器发送流式出站之前就注册好。
         await self._send_running_reply(chat_id, inbound)
         await self.bus.publish_inbound(inbound)
 
     async def _send_running_reply(self, chat_id: str, inbound: InboundMessage) -> None:
+        """发送“⏳ 正在处理”的占位回复。"""
         conversation_type = inbound.metadata.get("conversation_type", _CONVERSATION_TYPE_P2P)
         sender_staff_id = inbound.metadata.get("sender_staff_id", "")
         conversation_id = inbound.metadata.get("conversation_id", "")
@@ -486,9 +520,10 @@ class DingTalkChannel(Channel):
         except Exception:
             logger.exception("[DingTalk] failed to send running reply for chat=%s", chat_id)
 
-    # -- DingTalk API helpers ----------------------------------------------
+    # -- 钉钉 API 辅助方法 ----------------------------------------------
 
     async def _get_access_token(self) -> str:
+        """获取（必要时刷新）钉钉应用的 access token。"""
         if self._cached_token and time.monotonic() < self._token_expires_at:
             return self._cached_token
         async with self._token_lock:
@@ -497,7 +532,7 @@ class DingTalkChannel(Channel):
             async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
                 response = await client.post(
                     f"{DINGTALK_API_BASE}/v1.0/oauth2/accessToken",
-                    json={"appKey": self._client_id, "appSecret": self._client_secret},  # DingTalk API field names
+                    json={"appKey": self._client_id, "appSecret": self._client_secret},  # 钉钉 API 字段名
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -522,12 +557,14 @@ class DingTalkChannel(Channel):
 
     @staticmethod
     def _api_headers(token: str) -> dict[str, str]:
+        """构造钉钉 OpenAPI 通用请求头。"""
         return {
             "x-acs-dingtalk-access-token": token,
             "Content-Type": "application/json",
         }
 
     async def _send_text_message_to_user(self, robot_code: str, user_id: str, text: str) -> None:
+        """通过 sampleText 发送纯文本给单聊用户。"""
         token = await self._get_access_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.post(
@@ -543,6 +580,7 @@ class DingTalkChannel(Channel):
             response.raise_for_status()
 
     async def _send_text_message_to_group(self, robot_code: str, conversation_id: str, text: str) -> None:
+        """通过 sampleText 发送纯文本到群会话。"""
         token = await self._get_access_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.post(
@@ -558,6 +596,7 @@ class DingTalkChannel(Channel):
             response.raise_for_status()
 
     async def _send_p2p_message(self, robot_code: str, user_id: str, text: str) -> None:
+        """向单聊用户发送 sampleMarkdown 消息。"""
         text = _adapt_markdown_for_dingtalk(text)
         token = await self._get_access_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
@@ -586,8 +625,11 @@ class DingTalkChannel(Channel):
         *,
         at_user_ids: list[str] | None = None,  # noqa: ARG002
     ) -> None:
-        # at_user_ids accepted for call-site compatibility but not passed to the API
-        # (sampleMarkdown does not support @mentions).
+        """向群会话发送 sampleMarkdown 消息。
+
+        注：``at_user_ids`` 为调用方兼容性而保留，并不会真正传给 API
+        （sampleMarkdown 不支持 @ 提及）。
+        """
         text = _adapt_markdown_for_dingtalk(text)
         token = await self._get_access_token()
 
@@ -609,13 +651,15 @@ class DingTalkChannel(Channel):
             else:
                 logger.warning("[DingTalk] group send response: %s", data)
 
-    # -- AI Card streaming helpers -------------------------------------------
+    # -- AI Card 流式辅助 ------------------------------------------------
 
     def _make_card_source_key(self, inbound: InboundMessage) -> str:
+        """为入站消息构造 AI Card 流的源键。"""
         m = inbound.metadata
         return f"{m.get('conversation_type', '')}:{m.get('sender_staff_id', '')}:{m.get('conversation_id', '')}:{m.get('message_id', '')}"
 
     def _make_card_source_key_from_outbound(self, msg: OutboundMessage) -> str:
+        """为出站消息构造 AI Card 流的源键。"""
         m = msg.metadata
         correlation_id = m.get("message_id") or msg.thread_ts or ""
         return f"{m.get('conversation_type', '')}:{m.get('sender_staff_id', '')}:{m.get('conversation_id', '')}:{correlation_id}"
@@ -626,6 +670,7 @@ class DingTalkChannel(Channel):
         *,
         chatbot_message: Any = None,
     ) -> str | None:
+        """创建并下发一张 AI Card，返回 ``outTrackId``，失败时返回 ``None``。"""
         if self._dingtalk_client is None or chatbot_message is None:
             logger.warning("[DingTalk] SDK client or chatbot_message unavailable, skipping AI card")
             return None
@@ -660,6 +705,7 @@ class DingTalkChannel(Channel):
         is_finalize: bool = False,
         is_error: bool = False,
     ) -> None:
+        """向已存在的 AI Card 推送一段流式更新。"""
         replier = self._card_repliers.get(out_track_id)
         if not replier:
             raise RuntimeError(f"No AICardReplier found for track ID {out_track_id}")
@@ -673,9 +719,10 @@ class DingTalkChannel(Channel):
             failed=is_error,
         )
 
-    # -- media upload --------------------------------------------------------
+    # -- 媒体上传 -------------------------------------------------------
 
     async def _upload_media(self, file_path: str | Path, media_type: str) -> str | None:
+        """把本地文件上传到钉钉，返回 ``mediaId``。"""
         try:
             file_bytes = await asyncio.to_thread(Path(file_path).read_bytes)
             token = await self._get_access_token()
@@ -702,6 +749,7 @@ class DingTalkChannel(Channel):
 
     @staticmethod
     def _log_future_error(fut: Any, name: str, msg_id: str) -> None:
+        """``run_coroutine_threadsafe`` future 的错误回调，统一打印。"""
         try:
             exc = fut.exception()
             if exc:
@@ -711,16 +759,19 @@ class DingTalkChannel(Channel):
 
 
 class _DingTalkMessageHandler:
-    """Callback handler registered with dingtalk-stream."""
+    """注册到 ``dingtalk-stream`` 的回调处理器。"""
 
     def __init__(self, channel: DingTalkChannel) -> None:
+        """保存渠道引用，供回调时反查外发能力。"""
         self._channel = channel
 
     def pre_start(self) -> None:
+        """在 SDK 启动前向渠道回填 SDK 客户端引用，供 AI Card 创建使用。"""
         if hasattr(self, "dingtalk_client") and self.dingtalk_client is not None:
             self._channel._dingtalk_client = self.dingtalk_client
 
     async def raw_process(self, callback_message: Any) -> Any:
+        """SDK 的原始入口，转发给 ``process`` 后封装成 ACK 消息。"""
         import dingtalk_stream
         from dingtalk_stream.frames import Headers
 
@@ -733,6 +784,7 @@ class _DingTalkMessageHandler:
         return ack_message
 
     async def process(self, callback: Any) -> tuple[int, str]:
+        """把 SDK 回调解析为 ``ChatbotMessage`` 并投递给渠道。"""
         import dingtalk_stream
 
         incoming_message = dingtalk_stream.ChatbotMessage.from_dict(callback.data)

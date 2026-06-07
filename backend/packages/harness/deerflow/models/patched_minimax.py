@@ -1,13 +1,13 @@
-"""Patched ChatOpenAI adapter for MiniMax reasoning output.
+"""为 MiniMax 推理输出封装的 ``ChatOpenAI`` 适配器。
 
-MiniMax's OpenAI-compatible chat completions API can return structured
-``reasoning_details`` when ``extra_body.reasoning_split=true`` is enabled.
-``langchain_openai.ChatOpenAI`` currently ignores that field, so DeerFlow's
-frontend never receives reasoning content in the shape it expects.
+MiniMax 的 OpenAI 兼容 chat completions API 在启用
+``extra_body.reasoning_split=true`` 后会返回结构化的
+``reasoning_details``。``langchain_openai.ChatOpenAI`` 当前会忽略该
+字段，因此 DeerFlow 前端拿不到期望形态的推理内容。
 
-This adapter preserves ``reasoning_split`` in the request payload and maps the
-provider-specific reasoning field into ``additional_kwargs.reasoning_content``,
-which DeerFlow already understands.
+本适配器在请求负载中保留 ``reasoning_split``，并把 provider 专属
+的推理字段映射到 DeerFlow 已识别的
+``additional_kwargs.reasoning_content``。
 """
 
 from __future__ import annotations
@@ -33,6 +33,15 @@ def _extract_reasoning_text(
     *,
     strip_parts: bool = True,
 ) -> str | None:
+    """从 ``reasoning_details`` 列表中拼接所有非空 text 字段。
+
+    Args:
+        reasoning_details: 来自 provider 响应的 reasoning_details 字段。
+        strip_parts: 是否对每个 text 进行 ``strip``。
+
+    Returns:
+        str | None: 拼接得到的推理文本；为空时返回 ``None``。
+    """
     if not isinstance(reasoning_details, list):
         return None
 
@@ -50,9 +59,18 @@ def _extract_reasoning_text(
 
 
 def _strip_inline_think_tags(content: str) -> tuple[str, str | None]:
+    """从 ``content`` 中删除 ``<think>...</think>`` 段，并把内部文本收集为 reasoning。
+
+    Args:
+        content: 原始 assistant 文本。
+
+    Returns:
+        tuple[str, str | None]: 清洗后的内容与提取出的推理文本。
+    """
     reasoning_parts: list[str] = []
 
     def _replace(match: re.Match[str]) -> str:
+        """``re.sub`` 的回调：从 ``<think>...</think>`` 中取出文本并清空匹配。"""
         reasoning = match.group(1).strip()
         if reasoning:
             reasoning_parts.append(reasoning)
@@ -64,6 +82,7 @@ def _strip_inline_think_tags(content: str) -> tuple[str, str | None]:
 
 
 def _merge_reasoning(*values: str | None) -> str | None:
+    """按顺序合并若干推理片段，去重并用 ``\\n\\n`` 连接。"""
     merged: list[str] = []
     for value in values:
         if not value:
@@ -80,6 +99,7 @@ def _with_reasoning_content(
     *,
     preserve_whitespace: bool = False,
 ):
+    """把 ``reasoning`` 写入 ``additional_kwargs["reasoning_content"]``，返回拷贝。"""
     if not reasoning:
         return message
 
@@ -96,7 +116,7 @@ def _with_reasoning_content(
 
 
 class PatchedChatMiniMax(ChatOpenAI):
-    """ChatOpenAI adapter that preserves MiniMax reasoning output."""
+    """为 MiniMax 推理输出保留字段的 :class:`ChatOpenAI` 适配器。"""
 
     def _get_request_payload(
         self,
@@ -105,6 +125,7 @@ class PatchedChatMiniMax(ChatOpenAI):
         stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict:
+        """构造请求负载，并强制把 ``reasoning_split=True`` 注入到 ``extra_body``。"""
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         extra_body = payload.get("extra_body")
         if isinstance(extra_body, dict):
@@ -122,6 +143,7 @@ class PatchedChatMiniMax(ChatOpenAI):
         default_chunk_class: type,
         base_generation_info: dict | None,
     ) -> ChatGenerationChunk | None:
+        """把流式 chunk 转换为 :class:`ChatGenerationChunk`，并保留 reasoning 字段。"""
         if chunk.get("type") == "content.delta":
             return None
 
@@ -185,6 +207,7 @@ class PatchedChatMiniMax(ChatOpenAI):
         response: dict | Any,
         generation_info: dict | None = None,
     ) -> ChatResult:
+        """构造 :class:`ChatResult`，把 ``reasoning_details`` 与行内 ``<think>`` 标签合并。"""
         result = super()._create_chat_result(response, generation_info)
         response_dict = response if isinstance(response, dict) else response.model_dump()
         choices = response_dict.get("choices", [])

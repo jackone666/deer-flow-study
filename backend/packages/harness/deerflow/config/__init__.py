@@ -1,3 +1,12 @@
+"""DeerFlow 配置子包。
+
+集中管理 DeerFlow 各子系统的配置对象与加载入口，包括：
+- ``AppConfig``：顶层应用配置聚合器
+- ``Paths``：路径解析
+- ``MemoryConfig``、``SkillsConfig``、``LoopDetectionConfig`` 等：各子系统的 Pydantic 配置
+- 各种 ``get_*_config`` / ``load_*_from_dict`` 工具函数：提供全局单例与从字典加载的能力
+"""
+
 from .app_config import get_app_config
 from .extensions_config import ExtensionsConfig, get_extensions_config
 from .loop_detection_config import LoopDetectionConfig

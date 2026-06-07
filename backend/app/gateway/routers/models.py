@@ -1,3 +1,8 @@
+"""``/api/models`` 路由：列出与查询 DeerFlow 中已配置的 LLM 模型。
+
+响应会过滤掉 API Key 等敏感字段，仅返回前端展示所需元数据。
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -8,7 +13,8 @@ router = APIRouter(prefix="/api", tags=["models"])
 
 
 class ModelResponse(BaseModel):
-    """Response model for model information."""
+    """模型信息的响应模型。"""
+
 
     name: str = Field(..., description="Unique identifier for the model")
     model: str = Field(..., description="Actual provider model identifier")
@@ -19,13 +25,15 @@ class ModelResponse(BaseModel):
 
 
 class TokenUsageResponse(BaseModel):
-    """Token usage display configuration."""
+    """Token 用量展示配置。"""
+
 
     enabled: bool = Field(default=False, description="Whether token usage display is enabled")
 
 
 class ModelsListResponse(BaseModel):
-    """Response model for listing all models."""
+    """列出所有模型的响应模型。"""
+
 
     models: list[ModelResponse]
     token_usage: TokenUsageResponse
@@ -38,41 +46,12 @@ class ModelsListResponse(BaseModel):
     description="Retrieve a list of all available AI models configured in the system.",
 )
 async def list_models(config: AppConfig = Depends(get_config)) -> ModelsListResponse:
-    """List all available models from configuration.
-
-    Returns model information suitable for frontend display,
-    excluding sensitive fields like API keys and internal configuration.
-
-    Returns:
-        A list of all configured models with their metadata and token usage display settings.
-
-    Example Response:
-        ```json
-        {
-            "models": [
-                {
-                    "name": "gpt-4",
-                    "model": "gpt-4",
-                    "display_name": "GPT-4",
-                    "description": "OpenAI GPT-4 model",
-                    "supports_thinking": false,
-                    "supports_reasoning_effort": false
-                },
-                {
-                    "name": "claude-3-opus",
-                    "model": "claude-3-opus",
-                    "display_name": "Claude 3 Opus",
-                    "description": "Anthropic Claude 3 Opus model",
-                    "supports_thinking": true,
-                    "supports_reasoning_effort": false
-                }
-            ],
-            "token_usage": {
-                "enabled": true
-            }
-        }
-        ```
+    """列出配置中所有可用模型。
+    
+            返回适合前端展示的模型信息，
+            排除 API 密钥等敏感字段。
     """
+
     models = [
         ModelResponse(
             name=model.name,
@@ -97,27 +76,15 @@ async def list_models(config: AppConfig = Depends(get_config)) -> ModelsListResp
     description="Retrieve detailed information about a specific AI model by its name.",
 )
 async def get_model(model_name: str, config: AppConfig = Depends(get_config)) -> ModelResponse:
-    """Get a specific model by name.
-
-    Args:
-        model_name: The unique name of the model to retrieve.
-
-    Returns:
-        Model information if found.
-
-    Raises:
-        HTTPException: 404 if model not found.
-
-    Example Response:
-        ```json
-        {
-            "name": "gpt-4",
-            "display_name": "GPT-4",
-            "description": "OpenAI GPT-4 model",
-            "supports_thinking": false
-        }
-        ```
+    """通过名称获取指定模型。
+    
+            Args:
+                model_name: 要获取的模型唯一名称。
+    
+            Returns:
+                找到时返回模型信息，否则返回 404。
     """
+
     model = config.get_model_config(model_name)
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")

@@ -1,6 +1,4 @@
-"""
-Image Search Tool - Search images using DuckDuckGo for reference in image generation.
-"""
+"""图片搜索工具:基于 DuckDuckGo 检索参考图,供图像生成场景使用。"""
 
 import json
 import logging
@@ -23,22 +21,21 @@ def _search_images(
     layout: str | None = None,
     license_image: str | None = None,
 ) -> list[dict]:
-    """
-    Execute image search using DuckDuckGo.
+    """使用 DuckDuckGo 执行图片搜索。
 
     Args:
-        query: Search keywords
-        max_results: Maximum number of results
-        region: Search region
-        safesearch: Safe search level
-        size: Image size (Small/Medium/Large/Wallpaper)
-        color: Color filter
-        type_image: Image type (photo/clipart/gif/transparent/line)
-        layout: Layout (Square/Tall/Wide)
-        license_image: License filter
+        query: 搜索关键词。
+        max_results: 最大结果数。
+        region: 搜索区域。
+        safesearch: 安全搜索级别。
+        size: 图片尺寸(``Small``/``Medium``/``Large``/``Wallpaper``)。
+        color: 颜色过滤器。
+        type_image: 图片类型(``photo``/``clipart``/``gif``/``transparent``/``line``)。
+        layout: 布局(``Square``/``Tall``/``Wide``)。
+        license_image: 授权过滤器。
 
     Returns:
-        List of search results
+        搜索结果列表;库未安装或失败时为空列表。
     """
     try:
         from ddgs import DDGS
@@ -82,22 +79,25 @@ def image_search_tool(
     type_image: str | None = None,
     layout: str | None = None,
 ) -> str:
-    """Search for images online. Use this tool BEFORE image generation to find reference images for characters, portraits, objects, scenes, or any content requiring visual accuracy.
+    """在线搜索图片。请在图像生成之前使用本工具,查找人物、肖像、物体、场景等需要视觉准确性的参考图。
 
-    **When to use:**
-    - Before generating character/portrait images: search for similar poses, expressions, styles
-    - Before generating specific objects/products: search for accurate visual references
-    - Before generating scenes/locations: search for architectural or environmental references
-    - Before generating fashion/clothing: search for style and detail references
+    **使用时机:**
+    - 生成人物/肖像图像前:搜索相似姿态、表情、风格
+    - 生成特定物体/产品前:搜索准确的视觉参考
+    - 生成场景/地点前:搜索建筑或环境参考
+    - 生成服装/配饰前:搜索风格与细节参考
 
-    The returned image URLs can be used as reference images in image generation to significantly improve quality.
+    返回的图片 URL 可作为图像生成的参考图,显著提高质量。
 
     Args:
-        query: Search keywords describing the images you want to find. Be specific for better results (e.g., "Japanese woman street photography 1990s" instead of just "woman").
-        max_results: Maximum number of images to return. Default is 5.
-        size: Image size filter. Options: "Small", "Medium", "Large", "Wallpaper". Use "Large" for reference images.
-        type_image: Image type filter. Options: "photo", "clipart", "gif", "transparent", "line". Use "photo" for realistic references.
-        layout: Layout filter. Options: "Square", "Tall", "Wide". Choose based on your generation needs.
+        query: 描述待搜索图片的关键词,越具体效果越好(例如使用
+            ``"Japanese woman street photography 1990s"`` 而不是仅 ``"woman"``)。
+        max_results: 返回的最大图片数,默认 5。
+        size: 图片尺寸过滤器,可选 ``"Small"``/``"Medium"``/``"Large"``/``"Wallpaper"``;
+            参考图建议使用 ``"Large"``。
+        type_image: 图片类型过滤器,可选 ``"photo"``/``"clipart"``/``"gif"``/``"transparent"``/``"line"``;
+            写实参考建议使用 ``"photo"``。
+        layout: 布局过滤器,可选 ``"Square"``/``"Tall"``/``"Wide"``,根据生成需要选取。
     """
     config = get_app_config().get_tool_config("image_search")
 

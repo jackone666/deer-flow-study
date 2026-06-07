@@ -1,4 +1,4 @@
-"""Middleware for injecting image details into conversation before LLM call."""
+"""在 LLM 调用前将图片详情注入到会话中的中间件。"""
 
 import logging
 from typing import override
@@ -13,33 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 class ViewImageMiddlewareState(ThreadState):
-    """Reuse the thread state so reducer-backed keys keep their annotations."""
+    """复用线程状态，使带 Reducer 的键保留其注解。"""
 
 
 class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
-    """Injects image details as a human message before LLM calls when view_image tools have completed.
+    """当 ``view_image`` 工具调用完成后，在 LLM 调用前以人类消息形式注入图片详情。
 
-    This middleware:
-    1. Runs before each LLM call
-    2. Checks if the last assistant message contains view_image tool calls
-    3. Verifies all tool calls in that message have been completed (have corresponding ToolMessages)
-    4. If conditions are met, creates a human message with all viewed image details (including base64 data)
-    5. Adds the message to state so the LLM can see and analyze the images
+    该中间件：
+    1. 在每次 LLM 调用前运行；
+    2. 检查最后一条助手消息是否包含 ``view_image`` 工具调用；
+    3. 确认该消息中的所有工具调用都已完成（存在对应 ``ToolMessage``）；
+    4. 若条件满足，构造一条包含全部已查看图片详情（含 base64 数据）的
+       人类消息；
+    5. 将消息加入 state，让 LLM 看到并分析这些图片。
 
-    This enables the LLM to automatically receive and analyze images that were loaded via view_image tool,
-    without requiring explicit user prompts to describe the images.
+    这让 LLM 能自动接收并分析通过 ``view_image`` 工具加载的图片，无需用户
+    显式提示。
     """
 
     state_schema = ViewImageMiddlewareState
 
     def _get_last_assistant_message(self, messages: list) -> AIMessage | None:
-        """Get the last assistant message from the message list.
+        """从消息列表中获取最后一条助手消息。
 
         Args:
-            messages: List of messages
+            messages: 消息列表。
 
         Returns:
-            Last AIMessage or None if not found
+            最后一条 ``AIMessage``，找不到时返回 ``None``。
         """
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
@@ -47,13 +48,13 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         return None
 
     def _has_view_image_tool(self, message: AIMessage) -> bool:
-        """Check if the assistant message contains view_image tool calls.
+        """检查助手消息是否包含 ``view_image`` 工具调用。
 
         Args:
-            message: Assistant message to check
+            message: 待检查的助手消息。
 
         Returns:
-            True if message contains view_image tool calls
+            当消息包含 ``view_image`` 工具调用时返回 ``True``。
         """
         if not hasattr(message, "tool_calls") or not message.tool_calls:
             return False
@@ -61,14 +62,14 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         return any(tool_call.get("name") == "view_image" for tool_call in message.tool_calls)
 
     def _all_tools_completed(self, messages: list, assistant_msg: AIMessage) -> bool:
-        """Check if all tool calls in the assistant message have been completed.
+        """检查助手消息中的所有工具调用是否都已完成。
 
         Args:
-            messages: List of all messages
-            assistant_msg: The assistant message containing tool calls
+            messages: 全部消息列表。
+            assistant_msg: 含工具调用的助手消息。
 
         Returns:
-            True if all tool calls have corresponding ToolMessages
+            所有工具调用都有对应 ``ToolMessage`` 时返回 ``True``。
         """
         if not hasattr(assistant_msg, "tool_calls") or not assistant_msg.tool_calls:
             return False
@@ -92,13 +93,13 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         return tool_call_ids.issubset(completed_tool_ids)
 
     def _create_image_details_message(self, state: ViewImageMiddlewareState) -> list[str | dict]:
-        """Create a formatted message with all viewed image details.
+        """构造包含全部已查看图片详情的格式化消息。
 
         Args:
-            state: Current state containing viewed_images
+            state: 当前 state，其中应包含 ``viewed_images``。
 
         Returns:
-            List of content blocks (text and images) for the HumanMessage
+            适用于 ``HumanMessage`` 的内容块列表（文本与图片）。
         """
         viewed_images = state.get("viewed_images", {})
         if not viewed_images:
@@ -127,13 +128,13 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         return content_blocks
 
     def _should_inject_image_message(self, state: ViewImageMiddlewareState) -> bool:
-        """Determine if we should inject an image details message.
+        """判断是否应当注入图片详情消息。
 
         Args:
-            state: Current state
+            state: 当前 state。
 
         Returns:
-            True if we should inject the message
+            当需要注入时返回 ``True``。
         """
         messages = state.get("messages", [])
         if not messages:
@@ -165,13 +166,13 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
         return True
 
     def _inject_image_message(self, state: ViewImageMiddlewareState) -> dict | None:
-        """Internal helper to inject image details message.
+        """内部辅助：注入图片详情消息。
 
         Args:
-            state: Current state
+            state: 当前 state。
 
         Returns:
-            State update with additional human message, or None if no update needed
+            含新增人类消息的 state 更新；无需更新时返回 ``None``。
         """
         if not self._should_inject_image_message(state):
             return None
@@ -189,34 +190,34 @@ class ViewImageMiddleware(AgentMiddleware[ViewImageMiddlewareState]):
 
     @override
     def before_model(self, state: ViewImageMiddlewareState, runtime: Runtime) -> dict | None:
-        """Inject image details message before LLM call if view_image tools have completed (sync version).
+        """在 ``view_image`` 工具调用完成后，于 LLM 调用前注入图片详情（同步版本）。
 
-        This runs before each LLM call, checking if the previous turn included view_image
-        tool calls that have all completed. If so, it injects a human message with the image
-        details so the LLM can see and analyze the images.
+        该钩子会在每次 LLM 调用前运行，检查上一轮中的 ``view_image``
+        工具调用是否已全部完成；若完成，则注入一条携带图片详情的人类消息，
+        让 LLM 能看到并分析图片。
 
         Args:
-            state: Current state
-            runtime: Runtime context (unused but required by interface)
+            state: 当前 state。
+            runtime: 运行期 context（接口要求但此处未使用）。
 
         Returns:
-            State update with additional human message, or None if no update needed
+            含新增人类消息的 state 更新；无需更新时返回 ``None``。
         """
         return self._inject_image_message(state)
 
     @override
     async def abefore_model(self, state: ViewImageMiddlewareState, runtime: Runtime) -> dict | None:
-        """Inject image details message before LLM call if view_image tools have completed (async version).
+        """在 ``view_image`` 工具调用完成后，于 LLM 调用前注入图片详情（异步版本）。
 
-        This runs before each LLM call, checking if the previous turn included view_image
-        tool calls that have all completed. If so, it injects a human message with the image
-        details so the LLM can see and analyze the images.
+        该钩子会在每次 LLM 调用前运行，检查上一轮中的 ``view_image``
+        工具调用是否已全部完成；若完成，则注入一条携带图片详情的人类消息，
+        让 LLM 能看到并分析图片。
 
         Args:
-            state: Current state
-            runtime: Runtime context (unused but required by interface)
+            state: 当前 state。
+            runtime: 运行期 context（接口要求但此处未使用）。
 
         Returns:
-            State update with additional human message, or None if no update needed
+            含新增人类消息的 state 更新；无需更新时返回 ``None``。
         """
         return self._inject_image_message(state)

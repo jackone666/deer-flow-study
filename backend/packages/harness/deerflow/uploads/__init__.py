@@ -1,3 +1,10 @@
+"""Uploads 子包：上传文件管理相关工具。
+
+提供 ``get_uploads_dir`` / ``ensure_uploads_dir`` / ``normalize_filename`` /
+``validate_path_traversal`` / ``delete_file_safe`` 等与上传目录、文件名安全、
+路径穿越防护有关的纯业务函数；Gateway 与 Client 共享这一组实现。
+"""
+
 from .manager import (
     PathTraversalError,
     claim_unique_filename,

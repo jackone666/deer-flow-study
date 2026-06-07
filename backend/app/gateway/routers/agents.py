@@ -1,4 +1,4 @@
-"""CRUD API for custom agents."""
+"""自定义 Agent 的 CRUD API。"""
 
 import logging
 import re
@@ -20,7 +20,8 @@ AGENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 
 
 class AgentResponse(BaseModel):
-    """Response model for a custom agent."""
+    """自定义 agent 的响应模型。"""
+
 
     name: str = Field(..., description="Agent name (hyphen-case)")
     description: str = Field(default="", description="Agent description")
@@ -31,13 +32,15 @@ class AgentResponse(BaseModel):
 
 
 class AgentsListResponse(BaseModel):
-    """Response model for listing all custom agents."""
+    """所有自定义 agent 列表的响应模型。"""
+
 
     agents: list[AgentResponse]
 
 
 class AgentCreateRequest(BaseModel):
-    """Request body for creating a custom agent."""
+    """创建自定义 agent 的请求体。"""
+
 
     name: str = Field(..., description="Agent name (must match ^[A-Za-z0-9-]+$, stored as lowercase)")
     description: str = Field(default="", description="Agent description")
@@ -48,7 +51,8 @@ class AgentCreateRequest(BaseModel):
 
 
 class AgentUpdateRequest(BaseModel):
-    """Request body for updating a custom agent."""
+    """更新自定义 agent 的请求体。"""
+
 
     description: str | None = Field(default=None, description="Updated description")
     model: str | None = Field(default=None, description="Updated model override")
@@ -58,13 +62,13 @@ class AgentUpdateRequest(BaseModel):
 
 
 def _validate_agent_name(name: str) -> None:
-    """Validate agent name against allowed pattern.
+    """校验 Agent 名称是否匹配允许的字符模式。
 
     Args:
-        name: The agent name to validate.
+        name: 待校验的 Agent 名称。
 
     Raises:
-        HTTPException: 422 if the name is invalid.
+        HTTPException: 名称非法时抛出 422。
     """
     if not AGENT_NAME_PATTERN.match(name):
         raise HTTPException(
@@ -74,12 +78,12 @@ def _validate_agent_name(name: str) -> None:
 
 
 def _normalize_agent_name(name: str) -> str:
-    """Normalize agent name to lowercase for filesystem storage."""
+    """将 Agent 名称归一化为小写，用于文件系统存储。"""
     return name.lower()
 
 
 def _require_agents_api_enabled() -> None:
-    """Reject access unless the custom-agent management API is explicitly enabled."""
+    """除非显式启用自定义 Agent 管理 API，否则拒绝访问。"""
     if not get_agents_api_config().enabled:
         raise HTTPException(
             status_code=403,
@@ -88,7 +92,7 @@ def _require_agents_api_enabled() -> None:
 
 
 def _agent_config_to_response(agent_cfg: AgentConfig, include_soul: bool = False, *, user_id: str | None = None) -> AgentResponse:
-    """Convert AgentConfig to AgentResponse."""
+    """将 ``AgentConfig`` 转换为 ``AgentResponse``。"""
     soul: str | None = None
     if include_soul:
         soul = load_agent_soul(agent_cfg.name, user_id=user_id) or ""
@@ -110,10 +114,10 @@ def _agent_config_to_response(agent_cfg: AgentConfig, include_soul: bool = False
     description="List all custom agents available in the agents directory, including their soul content.",
 )
 async def list_agents() -> AgentsListResponse:
-    """List all custom agents.
+    """列出全部自定义 Agent。
 
     Returns:
-        List of all custom agents with their metadata and soul content.
+        包含所有自定义 Agent 及其元数据与 soul 内容的列表。
     """
     _require_agents_api_enabled()
 
@@ -132,16 +136,16 @@ async def list_agents() -> AgentsListResponse:
     description="Validate an agent name and check if it is available (case-insensitive).",
 )
 async def check_agent_name(name: str) -> dict:
-    """Check whether an agent name is valid and not yet taken.
+    """校验 Agent 名称是否合法且未被占用。
 
     Args:
-        name: The agent name to check.
+        name: 待检查的 Agent 名称。
 
     Returns:
         ``{"available": true/false, "name": "<normalized>"}``
 
     Raises:
-        HTTPException: 422 if the name is invalid.
+        HTTPException: 名称非法时抛出 422。
     """
     _require_agents_api_enabled()
     _validate_agent_name(name)
@@ -162,16 +166,16 @@ async def check_agent_name(name: str) -> dict:
     description="Retrieve details and SOUL.md content for a specific custom agent.",
 )
 async def get_agent(name: str) -> AgentResponse:
-    """Get a specific custom agent by name.
+    """按名称获取指定的自定义 Agent。
 
     Args:
-        name: The agent name.
+        name: Agent 名称。
 
     Returns:
-        Agent details including SOUL.md content.
+        包含 SOUL.md 内容的 Agent 详情。
 
     Raises:
-        HTTPException: 404 if agent not found.
+        HTTPException: Agent 不存在时抛出 404。
     """
     _require_agents_api_enabled()
     _validate_agent_name(name)
@@ -196,16 +200,16 @@ async def get_agent(name: str) -> AgentResponse:
     description="Create a new custom agent with its config and SOUL.md.",
 )
 async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
-    """Create a new custom agent.
+    """创建一个新的自定义 Agent。
 
     Args:
-        request: The agent creation request.
+        request: 创建 Agent 的请求体。
 
     Returns:
-        The created agent details.
+        已创建 Agent 的详情。
 
     Raises:
-        HTTPException: 409 if agent already exists, 422 if name is invalid.
+        HTTPException: Agent 已存在时抛出 409，名称非法时抛出 422。
     """
     _require_agents_api_enabled()
     _validate_agent_name(request.name)
@@ -263,17 +267,17 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
     description="Update an existing custom agent's config and/or SOUL.md.",
 )
 async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
-    """Update an existing custom agent.
+    """更新一个已存在的自定义 Agent。
 
     Args:
-        name: The agent name.
-        request: The update request (all fields optional).
+        name: Agent 名称。
+        request: 更新请求体（所有字段均可选）。
 
     Returns:
-        The updated agent details.
+        更新后的 Agent 详情。
 
     Raises:
-        HTTPException: 404 if agent not found.
+        HTTPException: Agent 不存在时抛出 404。
     """
     _require_agents_api_enabled()
     _validate_agent_name(name)
@@ -343,13 +347,15 @@ async def update_agent(name: str, request: AgentUpdateRequest) -> AgentResponse:
 
 
 class UserProfileResponse(BaseModel):
-    """Response model for the global user profile (USER.md)."""
+    """全局用户配置（USER.md）的响应模型。"""
+
 
     content: str | None = Field(default=None, description="USER.md content, or null if not yet created")
 
 
 class UserProfileUpdateRequest(BaseModel):
-    """Request body for setting the global user profile."""
+    """设置全局用户配置的请求体。"""
+
 
     content: str = Field(default="", description="USER.md content — describes the user's background and preferences")
 
@@ -361,10 +367,10 @@ class UserProfileUpdateRequest(BaseModel):
     description="Read the global USER.md file that is injected into all custom agents.",
 )
 async def get_user_profile() -> UserProfileResponse:
-    """Return the current USER.md content.
+    """返回当前 USER.md 的内容。
 
     Returns:
-        UserProfileResponse with content=None if USER.md does not exist yet.
+        若 USER.md 尚未创建，则 ``content`` 为 ``None`` 的 ``UserProfileResponse``。
     """
     _require_agents_api_enabled()
 
@@ -386,13 +392,13 @@ async def get_user_profile() -> UserProfileResponse:
     description="Write the global USER.md file that is injected into all custom agents.",
 )
 async def update_user_profile(request: UserProfileUpdateRequest) -> UserProfileResponse:
-    """Create or overwrite the global USER.md.
+    """创建或覆盖全局的 USER.md 文件。
 
     Args:
-        request: The update request with the new USER.md content.
+        request: 包含新 USER.md 内容的更新请求体。
 
     Returns:
-        UserProfileResponse with the saved content.
+        包含已保存内容的 ``UserProfileResponse``。
     """
     _require_agents_api_enabled()
 
@@ -414,14 +420,13 @@ async def update_user_profile(request: UserProfileUpdateRequest) -> UserProfileR
     description="Delete a custom agent and all its files (config, SOUL.md, memory).",
 )
 async def delete_agent(name: str) -> None:
-    """Delete a custom agent.
+    """删除一个自定义 Agent。
 
     Args:
-        name: The agent name.
+        name: Agent 名称。
 
     Raises:
-        HTTPException: 404 if no per-user copy exists; 409 if only a legacy
-            shared copy exists (suggesting the migration script).
+        HTTPException: 不存在 per-user 副本时抛出 404；仅存在 legacy 共享副本时抛出 409（建议先执行迁移脚本）。
     """
     _require_agents_api_enabled()
     _validate_agent_name(name)

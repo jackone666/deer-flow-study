@@ -1,3 +1,5 @@
+"""setup_agent 工具:为自定义 DeerFlow Agent 初始化 SOUL.md 与 config.yaml。"""
+
 import logging
 
 import yaml
@@ -20,12 +22,12 @@ def setup_agent(
     runtime: Runtime,
     skills: list[str] | None = None,
 ) -> Command:
-    """Setup the custom DeerFlow agent.
+    """创建自定义 DeerFlow Agent。
 
     Args:
-        soul: Full SOUL.md content defining the agent's personality and behavior.
-        description: One-line description of what the agent does.
-        skills: Optional list of skill names this agent should use. None means use all enabled skills, empty list means no skills.
+        soul: 完整 SOUL.md 内容,定义 Agent 的个性与行为。
+        description: 一句话说明该 Agent 的用途。
+        skills: 可选技能名单;None 表示使用所有已启用技能,空列表表示不使用任何技能。
     """
 
     agent_name: str | None = runtime.context.get("agent_name") if runtime.context else None

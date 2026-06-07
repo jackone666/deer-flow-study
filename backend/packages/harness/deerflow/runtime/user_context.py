@@ -1,35 +1,31 @@
-"""Request-scoped user context for user-based authorization.
+"""基于请求的 user context，用于按用户进行授权。
 
-This module holds a :class:`~contextvars.ContextVar` that the gateway's
-auth middleware sets after a successful authentication. Repository
-methods read the contextvar via a sentinel default parameter, letting
-routers stay free of ``user_id`` boilerplate.
+本模块持有一个 :class:`~contextvars.ContextVar`，由 Gateway 的认证中间件
+在认证成功后写入。仓储方法通过哨兵默认参数读取该 ContextVar，避免
+Router 编写 ``user_id`` 样板代码。
 
-Three-state semantics for the repository ``user_id`` parameter (the
-consumer side of this module lives in ``deerflow.persistence.*``):
+仓储 ``user_id`` 参数的三态语义（消费侧位于 ``deerflow.persistence.*``）：
 
-- ``_AUTO`` (module-private sentinel, default): read from contextvar;
-  raise :class:`RuntimeError` if unset.
-- Explicit ``str``: use the provided value, overriding contextvar.
-- Explicit ``None``: no WHERE clause — used only by migration scripts
-  and admin CLIs that intentionally bypass isolation.
+- ``_AUTO``（模块私有哨兵，默认）：从 ContextVar 读取；若未设置则
+  抛出 :class:`RuntimeError`。
+- 显式 ``str``：使用提供的值，覆盖 ContextVar。
+- 显式 ``None``：不附加 WHERE 条件——仅供迁移脚本与有意绕过隔离的
+  管理 CLI 使用。
 
-Dependency direction
+依赖方向
 --------------------
-``persistence`` (lower layer) reads from this module; ``gateway.auth``
-(higher layer) writes to it. ``CurrentUser`` is defined here as a
-:class:`typing.Protocol` so that ``persistence`` never needs to import
-the concrete ``User`` class from ``gateway.auth.models``. Any object
-with an ``.id: str`` attribute structurally satisfies the protocol.
+``persistence``（下层）从本模块读取；``gateway.auth``（上层）向其写入。
+``CurrentUser`` 在本模块中以 :class:`typing.Protocol` 定义，因此
+``persistence`` 永远无需从 ``gateway.auth.models`` 导入具体 ``User`` 类。
+任何具有 ``.id: str`` 属性的对象都能结构化地满足该协议。
 
-Asyncio semantics
+Asyncio 语义
 -----------------
-``ContextVar`` is task-local under asyncio, not thread-local. Each
-FastAPI request runs in its own task, so the context is naturally
-isolated. ``asyncio.create_task`` and ``asyncio.to_thread`` inherit the
-parent task's context, which is typically the intended behaviour; if
-a background task must *not* see the foreground user, wrap it with
-``contextvars.copy_context()`` to get a clean copy.
+``ContextVar`` 在 asyncio 下是 task-local 的，而非线程局部。每个 FastAPI
+请求都在各自的任务中运行，因此上下文天然隔离。``asyncio.create_task`` 与
+``asyncio.to_thread`` 会继承父任务的上下文，通常正是预期行为；若某个
+后台任务 *不应* 看到前台的 user，可用 ``contextvars.copy_context()`` 包裹
+以获得干净的副本。
 """
 
 from __future__ import annotations
@@ -40,10 +36,10 @@ from typing import Final, Protocol, runtime_checkable
 
 @runtime_checkable
 class CurrentUser(Protocol):
-    """Structural type for the current authenticated user.
+    """当前已认证用户的结构化类型。
 
-    Any object with an ``.id: str`` attribute satisfies this protocol.
-    Concrete implementations live in ``app.gateway.auth.models.User``.
+    任何具有 ``.id: str`` 属性的对象都满足该协议。具体实现位于
+    ``app.gateway.auth.models.User``。
     """
 
     id: str
@@ -53,36 +49,33 @@ _current_user: Final[ContextVar[CurrentUser | None]] = ContextVar("deerflow_curr
 
 
 def set_current_user(user: CurrentUser) -> Token[CurrentUser | None]:
-    """Set the current user for this async task.
+    """为当前异步任务设置当前 user。
 
-    Returns a reset token that should be passed to
-    :func:`reset_current_user` in a ``finally`` block to restore the
-    previous context.
+    返回一个重置 Token，应在 ``finally`` 块中传给
+    :func:`reset_current_user` 以恢复先前的上下文。
     """
     return _current_user.set(user)
 
 
 def reset_current_user(token: Token[CurrentUser | None]) -> None:
-    """Restore the context to the state captured by ``token``."""
+    """将上下文恢复到 *token* 捕获时的状态。"""
     _current_user.reset(token)
 
 
 def get_current_user() -> CurrentUser | None:
-    """Return the current user, or ``None`` if unset.
+    """返回当前 user，未设置时返回 ``None``。
 
-    Safe to call in any context. Used by code paths that can proceed
-    without a user (e.g. migration scripts, public endpoints).
+    可在任意上下文中安全调用。供即便没有 user 也能继续的代码路径
+    （如迁移脚本、公开端点）使用。
     """
     return _current_user.get()
 
 
 def require_current_user() -> CurrentUser:
-    """Return the current user, or raise :class:`RuntimeError`.
+    """返回当前 user，若未设置则抛出 :class:`RuntimeError`。
 
-    Used by repository code that must not be called outside a
-    request-authenticated context. The error message is phrased so
-    that a caller debugging a stack trace can locate the offending
-    code path.
+    供绝不应在请求认证上下文之外调用的仓储代码使用。错误信息经过
+    精心措辞，便于调试栈时定位违规的代码路径。
     """
     user = _current_user.get()
     if user is None:
@@ -98,10 +91,10 @@ DEFAULT_USER_ID: Final[str] = "default"
 
 
 def get_effective_user_id() -> str:
-    """Return the current user's id as a string, or DEFAULT_USER_ID if unset.
+    """返回当前 user 的 id（字符串形式），未设置时返回 ``DEFAULT_USER_ID``。
 
-    Unlike :func:`require_current_user` this never raises — it is designed
-    for filesystem-path resolution where a valid user bucket is always needed.
+    与 :func:`require_current_user` 不同，本函数永不抛错——它专为文件系统
+    路径解析设计，那些场景必须始终能拿到一个有效的 user 桶。
     """
     user = _current_user.get()
     if user is None:
@@ -110,24 +103,23 @@ def get_effective_user_id() -> str:
 
 
 def resolve_runtime_user_id(runtime: object | None) -> str:
-    """Single source of truth for a tool/middleware's effective user_id.
+    """工具/中间件 ``effective user_id`` 的单一权威解析入口。
 
-    Resolution order (most authoritative first):
-      1. ``runtime.context["user_id"]`` — set by ``inject_authenticated_user_context``
-         in the gateway from the auth-validated ``request.state.user``. This is
-         the only source that survives boundaries where the contextvar may have
-         been lost (background tasks scheduled outside the request task,
-         worker pools that don't copy_context, future cross-process drivers).
-      2. The ``_current_user`` ContextVar — set by the auth middleware at
-         request entry. Reliable for in-task work; copied by ``asyncio``
-         child tasks and by ``ContextThreadPoolExecutor``.
-      3. ``DEFAULT_USER_ID`` — last-resort fallback so unauthenticated
-         CLI / migration / test paths keep working without raising.
+    解析顺序（优先级从高到低）：
+      1. ``runtime.context["user_id"]`` —— 由 Gateway 中的
+         ``inject_authenticated_user_context`` 从通过认证的
+         ``request.state.user`` 写入。这是唯一能跨过 ContextVar 可能
+         丢失的边界（脱离请求任务的后台任务、不 ``copy_context`` 的
+         工作线程池以及未来的跨进程驱动）的来源。
+      2. ``_current_user`` ContextVar —— 由认证中间件在请求进入时写入。
+         在任务内调用可靠；会被 ``asyncio`` 子任务与
+         ``ContextThreadPoolExecutor`` 复制。
+      3. ``DEFAULT_USER_ID`` —— 末位兜底，使未经认证的 CLI / 迁移 /
+         测试路径也能继续工作而不会抛错。
 
-    Tools that persist user-scoped state (custom agents, memory, uploads)
-    MUST call this instead of ``get_effective_user_id()`` directly so they
-    benefit from the runtime.context channel that ``setup_agent`` already
-    relies on.
+    持久化按 user 隔离状态的工具（custom agents、memory、uploads）
+    必须调用本函数，而不是直接调用 ``get_effective_user_id()``，从而
+    利用 ``setup_agent`` 已依赖的 ``runtime.context`` 通道。
     """
     context = getattr(runtime, "context", None)
     if isinstance(context, dict):
@@ -147,16 +139,25 @@ def resolve_runtime_user_id(runtime: object | None) -> str:
 
 
 class _AutoSentinel:
-    """Singleton marker meaning 'resolve user_id from contextvar'."""
+    """单例哨兵，含义为“从 ContextVar 解析 user_id”。"""
 
     _instance: _AutoSentinel | None = None
 
     def __new__(cls) -> _AutoSentinel:
+        """执行相应操作。
+        
+                Args:
+                    cls: 参数说明。
+        
+                Returns:
+                    _AutoSentinel。
+        """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __repr__(self) -> str:
+        """返回对象的可读字符串表示。"""
         return "<AUTO>"
 
 
@@ -168,18 +169,16 @@ def resolve_user_id(
     *,
     method_name: str = "repository method",
 ) -> str | None:
-    """Resolve the user_id parameter passed to a repository method.
+    """解析传给仓储方法的 ``user_id`` 参数。
 
-    Three-state semantics:
+    三态语义：
 
-    - :data:`AUTO` (default): read from contextvar; raise
-      :class:`RuntimeError` if no user is in context. This is the
-      common case for request-scoped calls.
-    - Explicit ``str``: use the provided id verbatim, overriding any
-      contextvar value. Useful for tests and admin-override flows.
-    - Explicit ``None``: no filter — the repository should skip the
-      user_id WHERE clause entirely. Reserved for migration scripts
-      and CLI tools that intentionally bypass isolation.
+    - :data:`AUTO`（默认）：从 ContextVar 读取；若上下文中无 user 则
+      抛出 :class:`RuntimeError`。这是请求作用域调用的常见情况。
+    - 显式 ``str``：原样使用提供的 id，覆盖任何 ContextVar 值。便于
+      测试与管理覆盖流程。
+    - 显式 ``None``：不过滤——仓储应完全跳过 ``user_id`` 的 WHERE 条件。
+      仅供有意绕过隔离的迁移脚本与 CLI 工具使用。
     """
     if isinstance(value, _AutoSentinel):
         user = _current_user.get()

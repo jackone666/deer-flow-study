@@ -1,10 +1,9 @@
-"""One-time migration: move legacy thread dirs and memory into per-user layout.
+"""一次性迁移脚本：将旧版线程目录和记忆迁移到按用户隔离的布局。
 
-Usage:
-    PYTHONPATH=. python scripts/migrate_user_isolation.py [--dry-run] [--user-id USER_ID]
-
-The script is idempotent — re-running it after a successful migration is a no-op.
+    用法：``PYTHONPATH=. python scripts/migrate_user_isolation.py [--dry-run] [--user-id USER_ID]``。
+    该脚本是幂等的——成功迁移后再运行不会有任何副作用。
 """
+
 
 import argparse
 import logging
@@ -21,16 +20,14 @@ def migrate_thread_dirs(
     *,
     dry_run: bool = False,
 ) -> list[dict]:
-    """Move legacy thread directories into per-user layout.
-
-    Args:
-        paths: Paths instance.
-        thread_owner_map: Mapping of thread_id -> user_id from threads_meta table.
-        dry_run: If True, only log what would happen.
-
-    Returns:
-        List of migration report entries.
+    """将旧版线程目录迁移到按用户隔离的布局。
+    
+            Args:
+                paths: ``Paths`` 实例。
+                thread_owner_map: 来自 ``threads_meta`` 表的 ``thread_id -> user_id`` 映射。
+                dry_run: 若为 True，仅记录将要执行的动作。
     """
+
     report: list[dict] = []
     legacy_threads = paths.base_dir / "threads"
     if not legacy_threads.exists():
@@ -75,24 +72,13 @@ def migrate_agents(
     *,
     dry_run: bool = False,
 ) -> list[dict]:
-    """Move legacy custom-agent directories into per-user layout.
-
-    Legacy layout:  ``{base_dir}/agents/{name}/``
-    Per-user layout: ``{base_dir}/users/{user_id}/agents/{name}/``
-
-    Pre-existing per-user agents take precedence: if a destination already
-    exists for an agent name, the legacy copy is moved to
-    ``{base_dir}/migration-conflicts/agents/{name}/`` for manual review.
-
-    Args:
-        paths: Paths instance.
-        user_id: Target user to receive the legacy agents (defaults to
-            ``"default"``, matching ``DEFAULT_USER_ID`` for no-auth setups).
-        dry_run: If True, only log what would happen.
-
-    Returns:
-        List of migration report entries, one per legacy agent directory found.
+    """将旧版自定义 agent 目录迁移到按用户隔离的布局。
+    
+        旧版布局：``{base_dir}/agents/{name}/``
+        按用户布局：``{base_dir}/users/{user_id}/agents/{name}/``
+        按用户已存在的 agent 优先——绝不会被旧版全局版本覆盖。
     """
+
     report: list[dict] = []
     legacy_agents = paths.agents_dir
     if not legacy_agents.exists():
@@ -136,13 +122,14 @@ def migrate_memory(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Move legacy global memory.json into per-user layout.
-
-    Args:
-        paths: Paths instance.
-        user_id: Target user to receive the legacy memory.
-        dry_run: If True, only log.
+    """将旧版全局 ``memory.json`` 迁移到按用户隔离的布局。
+    
+            Args:
+                paths: ``Paths`` 实例。
+                user_id: 接收旧版记忆的目标用户。
+                dry_run: 若为 True，仅记录而不实际改动。
     """
+
     legacy_mem = paths.base_dir / "memory.json"
     if not legacy_mem.exists():
         logger.info("No legacy memory.json found — nothing to migrate.")
@@ -163,10 +150,11 @@ def migrate_memory(
 
 
 def _build_owner_map_from_db(paths: Paths) -> dict[str, str]:
-    """Query threads_meta table for thread_id -> user_id mapping.
-
-    Uses raw sqlite3 to avoid async dependencies.
+    """查询 ``threads_meta`` 表以获得 ``thread_id -> user_id`` 映射。
+    
+        使用原生 ``sqlite3`` 以避免异步依赖。
     """
+
     import sqlite3
 
     db_path = paths.base_dir / "deer-flow.db"
@@ -186,6 +174,11 @@ def _build_owner_map_from_db(paths: Paths) -> dict[str, str]:
 
 
 def main() -> None:
+    """执行赋值。
+    
+            Returns:
+                None。
+    """
     parser = argparse.ArgumentParser(description="Migrate DeerFlow data to per-user layout")
     parser.add_argument("--dry-run", action="store_true", help="Log actions without making changes")
     parser.add_argument(

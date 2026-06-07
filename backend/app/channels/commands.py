@@ -1,9 +1,7 @@
-"""Shared command definitions used by all channel implementations.
+"""所有渠道实现共享的命令定义。
 
-Keeping the authoritative command set in one place ensures that channel
-parsers (e.g. Feishu) and the ChannelManager dispatcher stay in sync
-automatically — adding or removing a command here is the single edit
-required.
+将权威命令集合集中在一处，可确保渠道解析器（例如飞书）与 ``ChannelManager``
+调度器自动保持同步——添加或移除命令只需修改本文件。
 """
 
 from __future__ import annotations

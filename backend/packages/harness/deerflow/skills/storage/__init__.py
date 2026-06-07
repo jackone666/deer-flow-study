@@ -1,6 +1,6 @@
-"""SkillStorage singleton + reflection-based factory.
+"""SkillStorage 单例与基于反射的工厂函数。
 
-Mirrors the pattern used by ``deerflow/sandbox/sandbox_provider.py``.
+模式与 :mod:`deerflow.sandbox.sandbox_provider` 一致。
 """
 
 from __future__ import annotations
@@ -13,17 +13,19 @@ _default_skill_storage_config: object | None = None  # AppConfig identity the si
 
 
 def get_or_new_skill_storage(**kwargs) -> SkillStorage:
-    """Return a ``SkillStorage`` instance — either a new one or the process singleton.
+    """获取一个 :class:`SkillStorage` 实例——新实例或进程级单例。
 
-    **New instance** is created (never cached) when:
-    - ``skills_path`` is provided — uses it as the ``host_path`` override (class still resolved via config).
-    - ``app_config`` is provided — constructs a storage from ``app_config.skills``
-      so that per-request config (e.g. Gateway ``Depends(get_config)``) is respected
-      without polluting the process-level singleton.
+    **新建实例**(不缓存)的场景:
+    - 传入 ``skills_path``:作为 ``host_path`` 覆盖,具体类仍按配置解析。
+    - 传入 ``app_config``:从 ``app_config.skills`` 构造,使每次请求使用自己的
+      配置(如 Gateway 的 ``Depends(get_config)``),不会污染进程级单例。
 
-    **Singleton** is returned (created on first call, then reused) when neither
-    ``skills_path`` nor ``app_config`` is given — uses ``get_app_config()`` to
-    resolve the active configuration.
+    **返回单例**(首次调用创建,之后复用)的场景:
+    - 既没有 ``skills_path`` 也没有 ``app_config``;此时使用 :func:`get_app_config`
+      解析当前配置。
+
+    Returns:
+        :class:`SkillStorage` 实例。
     """
     global _default_skill_storage, _default_skill_storage_config
 
@@ -31,6 +33,7 @@ def get_or_new_skill_storage(**kwargs) -> SkillStorage:
     from deerflow.config.skills_config import SkillsConfig
 
     def _make_storage(skills_config: SkillsConfig, *, host_path: str | None = None, **kwargs) -> SkillStorage:
+        """内部辅助方法。"""
         from deerflow.reflection import resolve_class
 
         cls = resolve_class(skills_config.use, SkillStorage)
@@ -69,7 +72,7 @@ def get_or_new_skill_storage(**kwargs) -> SkillStorage:
 
 
 def reset_skill_storage() -> None:
-    """Clear the cached singleton (used in tests and hot-reload scenarios)."""
+    """清空缓存的单例(供测试或热重载场景使用)。"""
     global _default_skill_storage, _default_skill_storage_config
     _default_skill_storage = None
     _default_skill_storage_config = None

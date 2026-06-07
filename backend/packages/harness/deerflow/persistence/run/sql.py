@@ -1,8 +1,7 @@
-"""SQLAlchemy-backed RunStore implementation.
+"""基于 SQLAlchemy 的 :class:`RunStore` 实现。
 
-Each method acquires and releases its own short-lived session.
-Run status updates happen from background workers that may live
-minutes -- we don't hold connections across long execution.
+每个方法各自获取并释放短生命周期的 session。Run 状态更新可能由
+存活数分钟的后台 worker 触发——我们不在长时间执行期间持有连接。
 """
 
 from __future__ import annotations
@@ -21,12 +20,19 @@ from deerflow.utils.time import coerce_iso
 
 
 class RunRepository(RunStore):
+    """runs 表的 SQLAlchemy repository。"""
+
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        """构造 repository。
+
+        Args:
+            session_factory: 异步 session 工厂。
+        """
         self._sf = session_factory
 
     @staticmethod
     def _normalize_model_name(model_name: str | None) -> str | None:
-        """Normalize model_name for storage: strip whitespace, truncate to 128 chars."""
+        """归一化 model_name：去空白并截断到 128 字符。"""
         if model_name is None:
             return None
         if not isinstance(model_name, str):
@@ -38,7 +44,7 @@ class RunRepository(RunStore):
 
     @staticmethod
     def _safe_json(obj: Any) -> Any:
-        """Ensure obj is JSON-serializable. Falls back to model_dump() or str()."""
+        """确保对象可被 JSON 序列化；失败时回退到 ``model_dump()`` 或 ``str()``。"""
         if obj is None:
             return None
         if isinstance(obj, (str, int, float, bool)):
@@ -65,13 +71,14 @@ class RunRepository(RunStore):
 
     @staticmethod
     def _row_to_dict(row: RunRow) -> dict[str, Any]:
+        """把 :class:`RunRow` 序列化为与 :class:`RunStore` 接口一致的 dict。"""
         d = row.to_dict()
-        # Remap JSON columns to match RunStore interface
+        # 重命名 JSON 列以匹配 RunStore 接口
         d["metadata"] = d.pop("metadata_json", {})
         d["kwargs"] = d.pop("kwargs_json", {})
-        # Convert datetime to ISO string for consistency with MemoryRunStore.
-        # SQLite drops tzinfo on read despite ``DateTime(timezone=True)`` —
-        # ``coerce_iso`` normalizes naive datetimes as UTC.
+        # 将 datetime 转为 ISO 字符串，与 MemoryRunStore 保持一致。
+        # SQLite 读出时尽管声明了 ``DateTime(timezone=True)`` 仍会丢 tzinfo——
+        # ``coerce_iso`` 将 naive datetime 视为 UTC。
         for key in ("created_at", "updated_at"):
             val = d.get(key)
             if isinstance(val, datetime):
@@ -94,11 +101,11 @@ class RunRepository(RunStore):
         created_at=None,
         follow_up_to_run_id=None,
     ):
-        """Insert or update a run row.
+        """插入或更新一行 run。
 
-        ``RunManager`` retries ``put`` after transient SQLite failures.  Making
-        this operation idempotent prevents a successful-but-unacknowledged first
-        commit from turning the retry into a primary-key failure.
+        ``RunManager`` 会在瞬时 SQLite 故障后重试 ``put``。把该操作
+        实现为幂等，可以避免在「首次 commit 成功但未确认」时把重试
+        演变成主键冲突。
         """
         resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.put")
         now = datetime.now(UTC)
@@ -131,6 +138,7 @@ class RunRepository(RunStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """按 ID 获取 run；非所属用户返回 ``None``。"""
         resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.get")
         async with self._sf() as session:
             row = await session.get(RunRow, run_id)
@@ -147,6 +155,7 @@ class RunRepository(RunStore):
         user_id: str | None | _AutoSentinel = AUTO,
         limit=100,
     ):
+        """列出指定 thread 下的 run，按创建时间倒序。"""
         resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.list_by_thread")
         stmt = select(RunRow).where(RunRow.thread_id == thread_id)
         if resolved_user_id is not None:
@@ -157,6 +166,7 @@ class RunRepository(RunStore):
             return [self._row_to_dict(r) for r in result.scalars()]
 
     async def update_status(self, run_id, status, *, error=None) -> bool:
+        """更新 run 状态；存在记录时返回 ``True``。"""
         values: dict[str, Any] = {"status": status, "updated_at": datetime.now(UTC)}
         if error is not None:
             values["error"] = error
@@ -166,6 +176,7 @@ class RunRepository(RunStore):
             return result.rowcount != 0
 
     async def update_model_name(self, run_id, model_name):
+        """更新 run 的 model_name（已归一化）。"""
         async with self._sf() as session:
             await session.execute(update(RunRow).where(RunRow.run_id == run_id).values(model_name=self._normalize_model_name(model_name), updated_at=datetime.now(UTC)))
             await session.commit()
@@ -176,6 +187,7 @@ class RunRepository(RunStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """按 ID 删除 run；非所属用户不删除。"""
         resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.delete")
         async with self._sf() as session:
             row = await session.get(RunRow, run_id)
@@ -187,6 +199,7 @@ class RunRepository(RunStore):
             await session.commit()
 
     async def list_pending(self, *, before=None):
+        """列出 ``status='pending'`` 且 ``created_at <= before`` 的 run。"""
         if before is None:
             before_dt = datetime.now(UTC)
         elif isinstance(before, datetime):
@@ -199,7 +212,7 @@ class RunRepository(RunStore):
             return [self._row_to_dict(r) for r in result.scalars()]
 
     async def list_inflight(self, *, before=None):
-        """Return persisted active runs for startup recovery."""
+        """返回已持久化的活跃 run，供启动恢复使用。"""
         if before is None:
             before_dt = datetime.now(UTC)
         elif isinstance(before, datetime):
@@ -235,9 +248,22 @@ class RunRepository(RunStore):
         first_human_message: str | None = None,
         error: str | None = None,
     ) -> bool:
-        """Update status + token usage + convenience fields on run completion.
+        """在 run 完成时更新状态、token 用量与便利字段。
 
-        Returns ``False`` when no run row matched the requested ``run_id``.
+        Args:
+            run_id: 目标 run ID。
+            status: 新状态。
+            total_input_tokens: 累计输入 token。
+            total_output_tokens: 累计输出 token。
+            total_tokens: 累计总 token。
+            llm_call_count: 累计 LLM 调用次数。
+            lead_agent_tokens / subagent_tokens / middleware_tokens: 按 caller 拆分的 token。
+            message_count: 消息计数。
+            last_ai_message / first_human_message: 末尾/首条消息预览（会被截断到 2000 字符）。
+            error: 错误信息（如有）。
+
+        Returns:
+            bool: 没有匹配的 ``run_id`` 时返回 ``False``。
         """
         values: dict[str, Any] = {
             "status": status,
@@ -277,7 +303,11 @@ class RunRepository(RunStore):
         last_ai_message: str | None = None,
         first_human_message: str | None = None,
     ) -> None:
-        """Update token usage + convenience fields while a run is still active."""
+        """在 run 仍处于运行中时，更新 token 用量与便利字段。
+
+        只覆盖显式传入（非 ``None``）的字段；其余保持原值。仅在
+        ``status == "running"`` 时才会落库，避免覆盖已经完结的 run。
+        """
         values: dict[str, Any] = {"updated_at": datetime.now(UTC)}
         optional_counters = {
             "total_input_tokens": total_input_tokens,
@@ -301,7 +331,15 @@ class RunRepository(RunStore):
             await session.commit()
 
     async def aggregate_tokens_by_thread(self, thread_id: str, *, include_active: bool = False) -> dict[str, Any]:
-        """Aggregate token usage via a single SQL GROUP BY query."""
+        """用单条 SQL ``GROUP BY`` 聚合 thread 下的 token 用量。
+
+        Args:
+            thread_id: 目标 thread ID。
+            include_active: 是否包含 ``running`` 状态的 run。
+
+        Returns:
+            dict: 含总量、按 model 分组、按 caller 分组的统计结果。
+        """
         statuses = ("success", "error", "running") if include_active else ("success", "error")
         _completed = RunRow.status.in_(statuses)
         _thread = RunRow.thread_id == thread_id

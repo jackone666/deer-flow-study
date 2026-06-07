@@ -1,4 +1,4 @@
-"""Memory updater for reading, writing, and updating memory data."""
+"""记忆更新器：负责读取、写入与更新记忆数据。"""
 
 import asyncio
 import atexit
@@ -39,38 +39,38 @@ atexit.register(lambda: _SYNC_MEMORY_UPDATER_EXECUTOR.shutdown(wait=False))
 
 
 def _create_empty_memory() -> dict[str, Any]:
-    """Backward-compatible wrapper around the storage-layer empty-memory factory."""
+    """存储层空白记忆工厂的向后兼容封装。"""
     return create_empty_memory()
 
 
 def _save_memory_to_file(memory_data: dict[str, Any], agent_name: str | None = None, *, user_id: str | None = None) -> bool:
-    """Backward-compatible wrapper around the configured memory storage save path."""
+    """已配置记忆存储 save 路径的向后兼容封装。"""
     return get_memory_storage().save(memory_data, agent_name, user_id=user_id)
 
 
 def get_memory_data(agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-    """Get the current memory data via storage provider."""
+    """通过存储提供者获取当前记忆数据。"""
     return get_memory_storage().load(agent_name, user_id=user_id)
 
 
 def reload_memory_data(agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-    """Reload memory data via storage provider."""
+    """通过存储提供者重新加载记忆数据。"""
     return get_memory_storage().reload(agent_name, user_id=user_id)
 
 
 def import_memory_data(memory_data: dict[str, Any], agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-    """Persist imported memory data via storage provider.
+    """通过存储提供者持久化导入的记忆数据。
 
     Args:
-        memory_data: Full memory payload to persist.
-        agent_name: If provided, imports into per-agent memory.
-        user_id: If provided, scopes memory to a specific user.
+        memory_data: 待持久化的完整记忆载荷。
+        agent_name: 若提供则导入到对应的 Agent 记忆。
+        user_id: 若提供则按用户隔离记忆。
 
     Returns:
-        The saved memory data after storage normalization.
+        存储归一化后保存的记忆数据。
 
     Raises:
-        OSError: If persisting the imported memory fails.
+        OSError: 当导入记忆持久化失败时抛出。
     """
     storage = get_memory_storage()
     if not storage.save(memory_data, agent_name, user_id=user_id):
@@ -79,7 +79,7 @@ def import_memory_data(memory_data: dict[str, Any], agent_name: str | None = Non
 
 
 def clear_memory_data(agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-    """Clear all stored memory data and persist an empty structure."""
+    """清空所有已存储记忆数据并持久化一份空白结构。"""
     cleared_memory = create_empty_memory()
     if not _save_memory_to_file(cleared_memory, agent_name, user_id=user_id):
         raise OSError("Failed to save cleared memory data")
@@ -87,7 +87,7 @@ def clear_memory_data(agent_name: str | None = None, *, user_id: str | None = No
 
 
 def _validate_confidence(confidence: float) -> float:
-    """Validate persisted fact confidence so stored JSON stays standards-compliant."""
+    """校验持久化事实的置信度，使存储的 JSON 保持符合规范。"""
     if not math.isfinite(confidence) or confidence < 0 or confidence > 1:
         raise ValueError("confidence")
     return confidence
@@ -101,7 +101,7 @@ def create_memory_fact(
     *,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a new fact and persist the updated memory data."""
+    """创建一条新事实并持久化更新后的记忆数据。"""
     normalized_content = content.strip()
     if not normalized_content:
         raise ValueError("content")
@@ -131,7 +131,7 @@ def create_memory_fact(
 
 
 def delete_memory_fact(fact_id: str, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-    """Delete a fact by its id and persist the updated memory data."""
+    """按 ID 删除一条事实并持久化更新后的记忆数据。"""
     memory_data = get_memory_data(agent_name, user_id=user_id)
     facts = memory_data.get("facts", [])
     updated_facts = [fact for fact in facts if fact.get("id") != fact_id]
@@ -156,7 +156,7 @@ def update_memory_fact(
     *,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Update an existing fact and persist the updated memory data."""
+    """更新一条已存在的事实并持久化更新后的记忆数据。"""
     memory_data = get_memory_data(agent_name, user_id=user_id)
     updated_memory = dict(memory_data)
     updated_facts: list[dict[str, Any]] = []
@@ -191,16 +191,14 @@ def update_memory_fact(
 
 
 def _extract_text(content: Any) -> str:
-    """Extract plain text from LLM response content (str or list of content blocks).
+    """从 LLM 响应内容中提取纯文本（str 或内容块列表）。
 
-    Modern LLMs may return structured content as a list of blocks instead of a
-    plain string, e.g. [{"type": "text", "text": "..."}]. Using str() on such
-    content produces Python repr instead of the actual text, breaking JSON
-    parsing downstream.
+    现代 LLM 可能以结构化内容块列表（而非纯字符串）返回结果，例如
+    ``[{"type": "text", "text": "..."}]``。若直接对这种内容使用 ``str()``，
+    会得到 Python repr 而非真实文本，导致下游 JSON 解析失败。
 
-    String chunks are concatenated without separators to avoid corrupting
-    chunked JSON/text payloads. Dict-based text blocks are treated as full text
-    blocks and joined with newlines for readability.
+    字符串片段之间不带分隔符地拼接，避免破坏分块 JSON/文本负载。
+    基于 dict 的文本块作为完整文本块处理，并以换行符连接以提高可读性。
     """
     if isinstance(content, str):
         return content
@@ -209,6 +207,11 @@ def _extract_text(content: Any) -> str:
         pending_str_parts: list[str] = []
 
         def flush_pending_str_parts() -> None:
+            """执行相应操作。
+            
+                    Returns:
+                        None。
+            """
             if pending_str_parts:
                 pieces.append("".join(pending_str_parts))
                 pending_str_parts.clear()
@@ -231,7 +234,7 @@ _REQUIRED_MEMORY_UPDATE_TOP_LEVEL_KEYS = frozenset({"user", "history", "newFacts
 
 
 def _normalize_memory_update_fact(fact: Any) -> dict[str, Any] | None:
-    """Normalize a single fact entry from a model-produced memory update."""
+    """对模型生成的记忆更新中单个事实条目进行归一化。"""
     if not isinstance(fact, dict):
         return None
 
@@ -279,7 +282,7 @@ def _normalize_memory_update_fact(fact: Any) -> dict[str, Any] | None:
 
 
 def _normalize_memory_update_data(update_data: dict[str, Any]) -> dict[str, Any]:
-    """Coerce parsed memory update data into the shape consumed by _apply_updates."""
+    """将解析后的记忆更新数据强制转换为 ``_apply_updates`` 期望的形状。"""
     user = update_data.get("user")
     history = update_data.get("history")
     new_facts = update_data.get("newFacts")
@@ -311,11 +314,11 @@ def _normalize_memory_update_data(update_data: dict[str, Any]) -> dict[str, Any]
 
 
 def _parse_memory_update_response(response_content: Any) -> dict[str, Any]:
-    """Parse the first valid memory-update JSON object from an LLM response.
+    """从 LLM 响应中解析第一个合法的记忆更新 JSON 对象。
 
-    Some providers may wrap JSON in thinking traces, prose, or markdown fences
-    even when prompted to return JSON only. This parser accepts safely
-    extractable JSON objects but does not repair truncated or malformed JSON.
+    即便提示词要求仅返回 JSON，部分提供方仍可能将 JSON 包裹在思考过程、
+    散文或 Markdown 围栏中。该解析器接受可安全抽取的 JSON 对象，但不会
+    修复被截断或格式错误的 JSON。
     """
     response_text = _extract_text(response_content).strip()
     decoder = json.JSONDecoder()
@@ -346,10 +349,10 @@ _UPLOAD_SENTENCE_RE = re.compile(
 
 
 def _strip_upload_mentions_from_memory(memory_data: dict[str, Any]) -> dict[str, Any]:
-    """Remove sentences about file uploads from all memory summaries and facts.
+    """从所有记忆摘要与事实中移除与文件上传相关的句子。
 
-    Uploaded files are session-scoped; persisting upload events in long-term
-    memory causes the agent to search for non-existent files in future sessions.
+    上传文件是会话范围的；将上传事件写入长期记忆会导致 Agent 在未来会话中
+    试图查找实际不存在的文件。
     """
     # Scrub summaries in user/history sections
     for section in ("user", "history"):
@@ -369,6 +372,7 @@ def _strip_upload_mentions_from_memory(memory_data: dict[str, Any]) -> dict[str,
 
 
 def _fact_content_key(content: Any) -> str | None:
+    """内部辅助方法。"""
     if not isinstance(content, str):
         return None
     stripped = content.strip()
@@ -378,18 +382,18 @@ def _fact_content_key(content: Any) -> str | None:
 
 
 class MemoryUpdater:
-    """Updates memory using LLM based on conversation context."""
+    """基于 LLM 与会话上下文更新记忆。"""
 
     def __init__(self, model_name: str | None = None):
-        """Initialize the memory updater.
+        """初始化记忆更新器。
 
         Args:
-            model_name: Optional model name to use. If None, uses config or default.
+            model_name: 可选的模型名；为 ``None`` 时使用配置或默认模型。
         """
         self._model_name = model_name
 
     def _get_model(self):
-        """Get the model for memory updates."""
+        """获取用于记忆更新的模型。"""
         config = get_memory_config()
         model_name = self._model_name or config.model_name
         return create_chat_model(name=model_name, thinking_enabled=False)
@@ -399,7 +403,7 @@ class MemoryUpdater:
         correction_detected: bool,
         reinforcement_detected: bool,
     ) -> str:
-        """Build optional prompt hints for correction and reinforcement signals."""
+        """为纠正与强化信号构建可选的提示词补充说明。"""
         correction_hint = ""
         if correction_detected:
             correction_hint = (
@@ -427,7 +431,7 @@ class MemoryUpdater:
         reinforcement_detected: bool,
         user_id: str | None = None,
     ) -> tuple[dict[str, Any], str] | None:
-        """Load memory and build the update prompt for a conversation."""
+        """加载记忆并为指定会话构建更新提示。"""
         config = get_memory_config()
         if not config.enabled or not messages:
             return None
@@ -456,7 +460,7 @@ class MemoryUpdater:
         agent_name: str | None,
         user_id: str | None = None,
     ) -> bool:
-        """Parse the model response, apply updates, and persist memory."""
+        """解析模型响应、应用更新并持久化记忆。"""
         update_data = _parse_memory_update_response(response_content)
         # Deep-copy before in-place mutation so a subsequent save() failure
         # cannot corrupt the still-cached original object reference.
@@ -473,13 +477,12 @@ class MemoryUpdater:
         reinforcement_detected: bool = False,
         user_id: str | None = None,
     ) -> bool:
-        """Update memory asynchronously by delegating to the sync path.
+        """异步更新记忆：委托给同步路径执行。
 
-        Uses ``asyncio.to_thread`` to run the *sync* ``model.invoke()`` path
-        in a worker thread so no second event loop is created and the
-        langchain async httpx client pool (shared with the lead agent) is
-        never touched.  This eliminates the cross-loop connection-reuse bug
-        described in issue #2615.
+        使用 ``asyncio.to_thread`` 在工作线程中执行同步的 ``model.invoke()``，
+        既不创建第二个事件循环，也绝不触碰 LangChain 的异步 httpx 客户端连接池
+        （与 Lead Agent 共享）。该方案消除了 issue #2615 中描述的
+        跨事件循环连接复用问题。
         """
         return await asyncio.to_thread(
             self._do_update_memory_sync,
@@ -500,13 +503,11 @@ class MemoryUpdater:
         reinforcement_detected: bool = False,
         user_id: str | None = None,
     ) -> bool:
-        """Pure-sync memory update using ``model.invoke()``.
+        """使用 ``model.invoke()`` 的纯同步记忆更新。
 
-        Uses the *sync* LLM call path so no event loop is created.  This
-        guarantees that the langchain provider's globally cached async
-        httpx ``AsyncClient`` / connection pool (the one shared with the
-        lead agent) is never touched — no cross-loop connection reuse is
-        possible.
+        通过同步 LLM 调用路径执行，不会创建新的事件循环，从而保证 LangChain
+        提供方全局缓存的异步 httpx ``AsyncClient``/连接池（与 Lead Agent 共享）
+        永远不会被触碰——杜绝跨循环连接复用。
         """
         try:
             prepared = self._prepare_update_prompt(
@@ -545,27 +546,25 @@ class MemoryUpdater:
         reinforcement_detected: bool = False,
         user_id: str | None = None,
     ) -> bool:
-        """Synchronously update memory using the sync LLM path.
+        """通过同步 LLM 路径同步更新记忆。
 
-        Uses ``model.invoke()`` (sync HTTP) which operates on a completely
-        separate connection pool from the async ``AsyncClient`` shared by
-        the lead agent.  This eliminates the cross-loop connection-reuse
-        bug described in issue #2615.
+        使用 ``model.invoke()``（同步 HTTP），与 Lead Agent 共享的异步
+        ``AsyncClient`` 连接池完全隔离，从而消除了 issue #2615 中描述的
+        跨循环连接复用问题。
 
-        When called from within a running event loop (e.g. from a LangGraph
-        node), the blocking sync call is offloaded to a thread pool so the
-        caller's loop is not blocked.
+        若在运行中的事件循环内调用（例如从 LangGraph 节点调用），
+        会将阻塞的同步调用卸载到线程池，避免阻塞调用方循环。
 
         Args:
-            messages: List of conversation messages.
-            thread_id: Optional thread ID for tracking source.
-            agent_name: If provided, updates per-agent memory. If None, updates global memory.
-            correction_detected: Whether recent turns include an explicit correction signal.
-            reinforcement_detected: Whether recent turns include a positive reinforcement signal.
-            user_id: If provided, scopes memory to a specific user.
+            messages: 会话消息列表。
+            thread_id: 可选的线程 ID，用于追踪来源。
+            agent_name: 若提供则按 Agent 隔离更新记忆；为 ``None`` 时更新全局记忆。
+            correction_detected: 最近的对话轮次中是否包含显式纠正信号。
+            reinforcement_detected: 最近的对话轮次中是否包含正向强化信号。
+            user_id: 若提供则按用户隔离记忆。
 
         Returns:
-            True if update was successful, False otherwise.
+            更新成功返回 ``True``，否则返回 ``False``。
         """
         try:
             loop = asyncio.get_running_loop()
@@ -603,15 +602,15 @@ class MemoryUpdater:
         update_data: dict[str, Any],
         thread_id: str | None = None,
     ) -> dict[str, Any]:
-        """Apply LLM-generated updates to memory.
+        """将 LLM 生成的更新应用到记忆中。
 
         Args:
-            current_memory: Current memory data.
-            update_data: Updates from LLM.
-            thread_id: Optional thread ID for tracking.
+            current_memory: 当前记忆数据。
+            update_data: 来自 LLM 的更新。
+            thread_id: 可选的线程 ID，用于追踪来源。
 
         Returns:
-            Updated memory data.
+            更新后的记忆数据。
         """
         config = get_memory_config()
         now = utc_now_iso_z()
@@ -692,18 +691,18 @@ def update_memory_from_conversation(
     reinforcement_detected: bool = False,
     user_id: str | None = None,
 ) -> bool:
-    """Convenience function to update memory from a conversation.
+    """根据会话更新记忆的便捷函数。
 
     Args:
-        messages: List of conversation messages.
-        thread_id: Optional thread ID.
-        agent_name: If provided, updates per-agent memory. If None, updates global memory.
-        correction_detected: Whether recent turns include an explicit correction signal.
-        reinforcement_detected: Whether recent turns include a positive reinforcement signal.
-        user_id: If provided, scopes memory to a specific user.
+        messages: 会话消息列表。
+        thread_id: 可选的线程 ID。
+        agent_name: 若提供则按 Agent 隔离更新记忆；为 ``None`` 时更新全局记忆。
+        correction_detected: 最近的对话轮次中是否包含显式纠正信号。
+        reinforcement_detected: 最近的对话轮次中是否包含正向强化信号。
+        user_id: 若提供则按用户隔离记忆。
 
     Returns:
-        True if successful, False otherwise.
+        成功返回 ``True``，失败返回 ``False``。
     """
     updater = MemoryUpdater()
     return updater.update_memory(messages, thread_id, agent_name, correction_detected, reinforcement_detected, user_id=user_id)

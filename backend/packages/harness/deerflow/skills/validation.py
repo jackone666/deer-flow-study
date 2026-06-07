@@ -1,6 +1,6 @@
-"""Skill frontmatter validation utilities.
+"""技能 frontmatter 校验工具。
 
-Pure-logic validation of SKILL.md frontmatter — no FastAPI or HTTP dependencies.
+纯逻辑校验,不依赖 FastAPI/HTTP。
 """
 
 import re
@@ -16,13 +16,13 @@ ALLOWED_FRONTMATTER_PROPERTIES = {"name", "description", "license", "allowed-too
 
 
 def _validate_skill_frontmatter(skill_dir: Path) -> tuple[bool, str, str | None]:
-    """Validate a skill directory's SKILL.md frontmatter.
+    """校验技能目录下 SKILL.md 的 frontmatter。
 
     Args:
-        skill_dir: Path to the skill directory containing SKILL.md.
+        skill_dir: 包含 SKILL.md 的技能目录。
 
     Returns:
-        Tuple of (is_valid, message, skill_name).
+        ``(is_valid, message, skill_name)``;校验失败时 ``skill_name`` 为 None。
     """
     skill_md = skill_dir / SKILL_MD_FILE
     if not skill_md.exists():

@@ -1,7 +1,6 @@
-"""Feedback endpoints — create, list, stats, delete.
+"""反馈相关端点——创建、列出、统计、删除。
 
-Allows users to submit thumbs-up/down feedback on runs,
-optionally scoped to a specific message.
+允许用户对运行提交赞成/反对的反馈，可以选择性地限定到某一条具体消息。
 """
 
 from __future__ import annotations
@@ -25,17 +24,23 @@ router = APIRouter(prefix="/api/threads", tags=["feedback"])
 
 
 class FeedbackCreateRequest(BaseModel):
-    rating: int = Field(..., description="Feedback rating: +1 (positive) or -1 (negative)")
-    comment: str | None = Field(default=None, description="Optional text feedback")
-    message_id: str | None = Field(default=None, description="Optional: scope feedback to a specific message")
+    """创建反馈请求体。"""
+
+    rating: int = Field(..., description="反馈评分：+1（赞同）或 -1（反对）")
+    comment: str | None = Field(default=None, description="可选的文本反馈")
+    message_id: str | None = Field(default=None, description="可选：将反馈限定到某一条具体消息")
 
 
 class FeedbackUpsertRequest(BaseModel):
-    rating: int = Field(..., description="Feedback rating: +1 (positive) or -1 (negative)")
-    comment: str | None = Field(default=None, description="Optional text feedback")
+    """创建或更新反馈请求体。"""
+
+    rating: int = Field(..., description="反馈评分：+1（赞同）或 -1（反对）")
+    comment: str | None = Field(default=None, description="可选的文本反馈")
 
 
 class FeedbackResponse(BaseModel):
+    """反馈响应模型。"""
+
     feedback_id: str
     run_id: str
     thread_id: str
@@ -47,6 +52,8 @@ class FeedbackResponse(BaseModel):
 
 
 class FeedbackStatsResponse(BaseModel):
+    """反馈统计响应模型。"""
+
     run_id: str
     total: int = 0
     positive: int = 0
@@ -66,7 +73,7 @@ async def upsert_feedback(
     body: FeedbackUpsertRequest,
     request: Request,
 ) -> dict[str, Any]:
-    """Create or update feedback for a run (idempotent)."""
+    """为某次运行创建或更新反馈（幂等操作）。"""
     if body.rating not in (1, -1):
         raise HTTPException(status_code=400, detail="rating must be +1 or -1")
 
@@ -96,7 +103,7 @@ async def delete_run_feedback(
     run_id: str,
     request: Request,
 ) -> dict[str, bool]:
-    """Delete the current user's feedback for a run."""
+    """删除当前用户对某次运行的反馈。"""
     user_id = await get_current_user(request)
     feedback_repo = get_feedback_repo(request)
     deleted = await feedback_repo.delete_by_run(
@@ -117,7 +124,7 @@ async def create_feedback(
     body: FeedbackCreateRequest,
     request: Request,
 ) -> dict[str, Any]:
-    """Submit feedback (thumbs-up/down) for a run."""
+    """为某次运行提交反馈（赞成/反对）。"""
     if body.rating not in (1, -1):
         raise HTTPException(status_code=400, detail="rating must be +1 or -1")
 
@@ -149,7 +156,7 @@ async def list_feedback(
     run_id: str,
     request: Request,
 ) -> list[dict[str, Any]]:
-    """List all feedback for a run."""
+    """列出某次运行的所有反馈。"""
     feedback_repo = get_feedback_repo(request)
     return await feedback_repo.list_by_run(thread_id, run_id)
 
@@ -161,7 +168,7 @@ async def feedback_stats(
     run_id: str,
     request: Request,
 ) -> dict[str, Any]:
-    """Get aggregated feedback stats (positive/negative counts) for a run."""
+    """获取某次运行的反馈聚合统计（赞同/反对计数）。"""
     feedback_repo = get_feedback_repo(request)
     return await feedback_repo.aggregate_by_run(thread_id, run_id)
 
@@ -174,7 +181,7 @@ async def delete_feedback(
     feedback_id: str,
     request: Request,
 ) -> dict[str, bool]:
-    """Delete a feedback record."""
+    """删除一条反馈记录。"""
     feedback_repo = get_feedback_repo(request)
     # Verify feedback belongs to the specified thread/run before deleting
     existing = await feedback_repo.get(feedback_id)

@@ -1,4 +1,4 @@
-"""Telegram channel — connects via long-polling (no public IP needed)."""
+"""Telegram 渠道 —— 通过长轮询连接（无需公网 IP）。"""
 
 from __future__ import annotations
 
@@ -14,14 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramChannel(Channel):
-    """Telegram bot channel using long-polling.
+    """基于长轮询的 Telegram 机器人渠道。
 
-    Configuration keys (in ``config.yaml`` under ``channels.telegram``):
-        - ``bot_token``: Telegram Bot API token (from @BotFather).
-        - ``allowed_users``: (optional) List of allowed Telegram user IDs. Empty = allow all.
+    ``config.yaml`` 中 ``channels.telegram`` 下的配置键：
+        - ``bot_token``：Telegram Bot API token（来自 @BotFather）。
+        - ``allowed_users``：（可选）允许的 Telegram user ID 列表。空 = 全部允许。
     """
 
     def __init__(self, bus: MessageBus, config: dict[str, Any]) -> None:
+        """初始化 Telegram 渠道，解析允许用户、记录最近发出的消息用于主题回复。"""
         super().__init__(name="telegram", bus=bus, config=config)
         self._application = None
         self._thread: threading.Thread | None = None
@@ -33,10 +34,11 @@ class TelegramChannel(Channel):
                 self._allowed_users.add(int(uid))
             except (ValueError, TypeError):
                 pass
-        # chat_id -> last sent message_id for threaded replies
+        # chat_id -> 最近一次发送的消息 ID，用于在主题内回复
         self._last_bot_message: dict[str, int] = {}
 
     async def start(self) -> None:
+        """启动渠道：构造 application、注册 handlers、订阅总线、在独立线程中跑轮询。"""
         if self._running:
             return
 
@@ -55,10 +57,10 @@ class TelegramChannel(Channel):
         self._running = True
         self.bus.subscribe_outbound(self._on_outbound)
 
-        # Build the application
+        # 构造 application
         app = ApplicationBuilder().token(bot_token).build()
 
-        # Command handlers
+        # 命令处理器
         app.add_handler(CommandHandler("start", self._cmd_start))
         app.add_handler(CommandHandler("new", self._cmd_generic))
         app.add_handler(CommandHandler("status", self._cmd_generic))
@@ -66,17 +68,18 @@ class TelegramChannel(Channel):
         app.add_handler(CommandHandler("memory", self._cmd_generic))
         app.add_handler(CommandHandler("help", self._cmd_generic))
 
-        # General message handler
+        # 通用文本消息处理器
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
 
         self._application = app
 
-        # Run polling in a dedicated thread with its own event loop
+        # 在独立线程 + 独立事件循环中运行轮询
         self._thread = threading.Thread(target=self._run_polling, daemon=True)
         self._thread.start()
         logger.info("Telegram channel started")
 
     async def stop(self) -> None:
+        """停止渠道：解绑订阅、停止轮询循环、清理状态。"""
         self._running = False
         self.bus.unsubscribe_outbound(self._on_outbound)
         if self._tg_loop and self._tg_loop.is_running():
@@ -88,6 +91,7 @@ class TelegramChannel(Channel):
         logger.info("Telegram channel stopped")
 
     async def send(self, msg: OutboundMessage, *, _max_retries: int = 3) -> None:
+        """把出站文本消息发到 Telegram，按最近一次 bot 消息做主题回复，带指数退避重试。"""
         if not self._application:
             return
 
@@ -99,7 +103,7 @@ class TelegramChannel(Channel):
 
         kwargs: dict[str, Any] = {"chat_id": chat_id, "text": msg.text}
 
-        # Reply to the last bot message in this chat for threading
+        # 在该 chat 中回复到上一次 bot 消息，构造“主题”效果
         reply_to = self._last_bot_message.get(msg.chat_id)
         if reply_to:
             kwargs["reply_to_message_id"] = reply_to
@@ -130,6 +134,7 @@ class TelegramChannel(Channel):
         raise last_exc
 
     async def send_file(self, msg: OutboundMessage, attachment: ResolvedAttachment) -> bool:
+        """上传并发送文件附件（图片走 ``send_photo``，其他走 ``send_document``）。"""
         if not self._application:
             return False
 
@@ -139,7 +144,7 @@ class TelegramChannel(Channel):
             logger.error("[Telegram] Invalid chat_id: %s", msg.chat_id)
             return False
 
-        # Telegram limits: 10MB for photos, 50MB for documents
+        # Telegram 限制：图片 10MB，文档 50MB
         if attachment.size > 50 * 1024 * 1024:
             logger.warning("[Telegram] file too large (%d bytes), skipping: %s", attachment.size, attachment.filename)
             return False
@@ -171,10 +176,10 @@ class TelegramChannel(Channel):
             logger.exception("[Telegram] failed to send file: %s", attachment.filename)
             return False
 
-    # -- helpers -----------------------------------------------------------
+    # -- 辅助 -----------------------------------------------------------
 
     async def _send_running_reply(self, chat_id: str, reply_to_message_id: int) -> None:
-        """Send a 'Working on it...' reply to the user's message."""
+        """回复用户“⏳ 正在处理”提示。"""
         if not self._application:
             return
         try:
@@ -188,9 +193,10 @@ class TelegramChannel(Channel):
         except Exception:
             logger.exception("[Telegram] failed to send running reply in chat=%s", chat_id)
 
-    # -- internal ----------------------------------------------------------
+    # -- 内部 ----------------------------------------------------------
     @staticmethod
     def _log_future_error(fut, name: str, msg_id: str):
+        """``run_coroutine_threadsafe`` future 的错误回调。"""
         try:
             exc = fut.exception()
             if exc:
@@ -199,13 +205,12 @@ class TelegramChannel(Channel):
             logger.exception("[Telegram] Failed to inspect future for %s (msg_id=%s)", name, msg_id)
 
     def _run_polling(self) -> None:
-        """Run telegram polling in a dedicated thread."""
+        """在独立线程中运行 Telegram 轮询。"""
         self._tg_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._tg_loop)
         try:
-            # Cannot use run_polling() because it calls add_signal_handler(),
-            # which only works in the main thread.  Instead, manually
-            # initialize the application and start the updater.
+            # 不能直接用 run_polling()：它会调用 add_signal_handler()，
+            # 而 add_signal_handler 只能在主线程中工作。改用手动 initialize / start 流程。
             self._tg_loop.run_until_complete(self._application.initialize())
             self._tg_loop.run_until_complete(self._application.start())
             self._tg_loop.run_until_complete(self._application.updater.start_polling())
@@ -214,7 +219,7 @@ class TelegramChannel(Channel):
             if self._running:
                 logger.exception("Telegram polling error")
         finally:
-            # Graceful shutdown
+            # 优雅关停
             try:
                 if self._application.updater.running:
                     self._tg_loop.run_until_complete(self._application.updater.stop())
@@ -224,22 +229,24 @@ class TelegramChannel(Channel):
                 logger.exception("Error during Telegram shutdown")
 
     def _check_user(self, user_id: int) -> bool:
+        """判断 user_id 是否在允许列表中。空列表视为全部放行。"""
         if not self._allowed_users:
             return True
         return user_id in self._allowed_users
 
     async def _cmd_start(self, update, context) -> None:
-        """Handle /start command."""
+        """处理 ``/start`` 命令。"""
         if not self._check_user(update.effective_user.id):
             return
         await update.message.reply_text("Welcome to DeerFlow! Send me a message to start a conversation.\nType /help for available commands.")
 
     async def _process_incoming_with_reply(self, chat_id: str, msg_id: int, inbound: InboundMessage) -> None:
+        """先发“正在处理”回复，再发布到消息总线。"""
         await self._send_running_reply(chat_id, msg_id)
         await self.bus.publish_inbound(inbound)
 
     async def _cmd_generic(self, update, context) -> None:
-        """Forward slash commands to the channel manager."""
+        """把斜杠命令转发到 ``ChannelManager``。"""
         if not self._check_user(update.effective_user.id):
             return
 
@@ -248,8 +255,8 @@ class TelegramChannel(Channel):
         user_id = str(update.effective_user.id)
         msg_id = str(update.message.message_id)
 
-        # Use the same topic_id logic as _on_text so that commands
-        # like /new target the correct thread mapping.
+        # 使用与 _on_text 一致的 topic_id 逻辑，让 ``/new`` 等命令能命中
+        # 正确的主题映射。
         if update.effective_chat.type == "private":
             topic_id = None
         else:
@@ -275,7 +282,7 @@ class TelegramChannel(Channel):
             logger.warning("[Telegram] Main loop not running. Cannot publish inbound message.")
 
     async def _on_text(self, update, context) -> None:
-        """Handle regular text messages."""
+        """处理普通文本消息。"""
         if not self._check_user(update.effective_user.id):
             return
 
@@ -287,11 +294,9 @@ class TelegramChannel(Channel):
         user_id = str(update.effective_user.id)
         msg_id = str(update.message.message_id)
 
-        # topic_id determines which DeerFlow thread the message maps to.
-        # In private chats, use None so that all messages share a single
-        # thread (the store key becomes "channel:chat_id").
-        # In group chats, use the reply-to message id or the current
-        # message id to keep separate conversation threads.
+        # topic_id 决定消息映射到哪个 DeerFlow 主题。
+        # 在私聊中，使用 None 使所有消息共享同一主题（store 键为 "channel:chat_id"）。
+        # 在群聊中，使用回复的消息 id 或当前消息 id 来区分会话。
         if update.effective_chat.type == "private":
             topic_id = None
         else:

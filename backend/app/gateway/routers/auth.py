@@ -1,4 +1,4 @@
-"""Authentication endpoints."""
+"""身份认证相关端点。"""
 
 import asyncio
 import logging
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 class LoginResponse(BaseModel):
-    """Response model for login — token only lives in HttpOnly cookie."""
+    """登录响应模型——token 仅存放在 HttpOnly cookie 中。"""
 
     expires_in: int  # seconds
     needs_setup: bool = False
@@ -81,23 +81,21 @@ _COMMON_PASSWORDS: frozenset[str] = frozenset(
 
 
 def _password_is_common(password: str) -> bool:
-    """Case-insensitive blocklist check.
+    """大小写不敏感的弱密码黑名单检查。
 
-    Lowercases the input so trivial mutations like ``Password`` /
-    ``PASSWORD`` are also rejected. Does not normalize digit substitutions
-    (``p@ssw0rd`` is included as a literal entry instead) — keeping the
-    rule cheap and predictable.
+    会对输入做小写化，使 ``Password`` / ``PASSWORD`` 这类简单变形也被拒绝。
+    不会对数字替换做归一化（``p@ssw0rd`` 直接作为字面量条目加入）——以保持
+    规则实现简单且行为可预测。
     """
     return password.lower() in _COMMON_PASSWORDS
 
 
 def _validate_strong_password(value: str) -> str:
-    """Pydantic field-validator body shared by Register + ChangePassword.
+    """由注册和修改密码两个模型共享的 Pydantic 字段校验器逻辑。
 
-    Constraint = function, not type-level mixin. The two request models
-    have no "is-a" relationship; they only share the password-strength
-    rule. Lifting it into a free function lets each model bind it via
-    ``@field_validator(field_name)`` without inheritance gymnastics.
+    采用函数而非类型级 mixin 来表达约束。两个请求模型并不存在 is-a 关系，
+    只共享密码强度规则。把它提取为独立函数后，每个模型都能通过
+    ``@field_validator(field_name)`` 直接绑定，而无需借助继承机制。
     """
     if _password_is_common(value):
         raise ValueError("Password is too common; choose a stronger password.")
@@ -105,7 +103,8 @@ def _validate_strong_password(value: str) -> str:
 
 
 class RegisterRequest(BaseModel):
-    """Request model for user registration."""
+    """用户注册请求模型。"""
+
 
     email: EmailStr
     password: str = Field(..., min_length=8)
@@ -114,7 +113,8 @@ class RegisterRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """Request model for password change (also handles setup flow)."""
+    """修改密码请求模型（也处理初始化流程）。"""
+
 
     current_password: str
     new_password: str = Field(..., min_length=8)
@@ -124,7 +124,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 class MessageResponse(BaseModel):
-    """Generic message response."""
+    """通用消息响应。"""
+
 
     message: str
 
@@ -133,7 +134,7 @@ class MessageResponse(BaseModel):
 
 
 def _set_session_cookie(response: Response, token: str, request: Request) -> None:
-    """Set the access_token HttpOnly cookie on the response."""
+    """在响应上设置 ``access_token`` HttpOnly cookie。"""
     config = get_auth_config()
     is_https = is_secure_request(request)
     response.set_cookie(
@@ -163,12 +164,11 @@ _login_attempts: dict[str, tuple[int, float]] = {}
 
 
 def _trusted_proxies() -> list:
-    """Parse ``AUTH_TRUSTED_PROXIES`` env var into a list of ip_network objects.
+    """解析 ``AUTH_TRUSTED_PROXIES`` 环境变量为 ``ip_network`` 对象列表。
 
-    Comma-separated CIDR or single-IP entries. Empty / unset = no proxy is
-    trusted (direct mode). Invalid entries are skipped with a logger warning.
-    Read live so env-var overrides take effect immediately and tests can
-    ``monkeypatch.setenv`` without poking a module-level cache.
+    支持以逗号分隔的 CIDR 或单 IP 条目。空 / 未设置表示不信任任何代理（直连模式）。
+    非法条目会被跳过并以 warn 级别日志记录。读取逻辑实时生效，因此环境变量覆盖
+    会立即生效，测试中也可以通过 ``monkeypatch.setenv`` 调整而无需碰模块级缓存。
     """
     raw = os.getenv("AUTH_TRUSTED_PROXIES", "").strip()
     if not raw:
@@ -186,25 +186,21 @@ def _trusted_proxies() -> list:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract the real client IP for rate limiting.
+    """提取用于限流的真实客户端 IP。
 
-    Trust model:
+    信任模型：
 
-    - The TCP peer (``request.client.host``) is always the baseline. It is
-      whatever the kernel reports as the connecting socket — unforgeable
-      by the client itself.
-    - ``X-Real-IP`` is **only** honored if the TCP peer is in the
-      ``AUTH_TRUSTED_PROXIES`` allowlist (set via env var, comma-separated
-      CIDR or single IPs). When set, the gateway is assumed to be behind a
-      reverse proxy (nginx, Cloudflare, ALB, …) that overwrites
-      ``X-Real-IP`` with the original client address.
-    - With no ``AUTH_TRUSTED_PROXIES`` set, ``X-Real-IP`` is silently
-      ignored — closing the bypass where any client could rotate the
-      header to dodge per-IP rate limits in dev / direct-gateway mode.
+    - TCP 对端（``request.client.host``）始终作为基线。它由内核上报为连接的
+      socket 端点——客户端自身不可伪造。
+    - 只有当 TCP 对端在 ``AUTH_TRUSTED_PROXIES`` 白名单中时（通过环境变量配置，
+      支持逗号分隔的 CIDR 或单 IP），才会采纳 ``X-Real-IP`` 头。设置该环境变量
+      表示 Gateway 部署在反向代理（nginx、Cloudflare、ALB 等）之后，由反向代理
+      将原始客户端地址写入 ``X-Real-IP``。
+    - 当未设置 ``AUTH_TRUSTED_PROXIES`` 时，``X-Real-IP`` 会被静默忽略——
+      关闭那种任何客户端都能通过轮换该头来绕过 per-IP 限流的旁路（开发/直连模式）。
 
-    ``X-Forwarded-For`` is intentionally NOT used because it is naturally
-    client-controlled at the *first* hop and the trust chain is harder to
-    audit per-request.
+    故意不使用 ``X-Forwarded-For``，因为它在第一跳就是客户端可控的，逐请求审计其
+    信任链非常困难。
     """
     peer_host = request.client.host if request.client else None
 
@@ -217,14 +213,14 @@ def _get_client_ip(request: Request) -> str:
                 if real_ip:
                     return real_ip
         except ValueError:
-            # peer_host wasn't a parseable IP (e.g. "unknown") — fall through
+            # peer_host 不是可解析的 IP（例如 "unknown"）—— 跳过
             pass
 
     return peer_host or "unknown"
 
 
 def _check_rate_limit(ip: str) -> None:
-    """Raise 429 if the IP is currently locked out."""
+    """若该 IP 当前被锁定，则抛出 429。"""
     record = _login_attempts.get(ip)
     if record is None:
         return
@@ -242,15 +238,15 @@ _MAX_TRACKED_IPS = 10000
 
 
 def _record_login_failure(ip: str) -> None:
-    """Record a failed login attempt for the given IP."""
-    # Evict expired lockouts when dict grows too large
+    """为指定 IP 记录一次登录失败。"""
+    # 当字典过大时淘汰已过期的锁定记录
     if len(_login_attempts) >= _MAX_TRACKED_IPS:
         now = time.time()
         expired = [k for k, (c, t) in _login_attempts.items() if c >= _MAX_LOGIN_ATTEMPTS and now >= t]
         for k in expired:
             del _login_attempts[k]
-        # If still too large, evict cheapest-to-lose half: below-threshold
-        # IPs (lock_until=0.0) sort first, then earliest-expiring lockouts.
+        # 如果仍然过大，再淘汰最容易丢失的一半：未达阈值的 IP（lock_until=0.0）
+        # 排在前面，然后是最早过期的锁定记录。
         if len(_login_attempts) >= _MAX_TRACKED_IPS:
             by_time = sorted(_login_attempts.items(), key=lambda kv: kv[1][1])
             for k, _ in by_time[: len(by_time) // 2]:
@@ -266,7 +262,7 @@ def _record_login_failure(ip: str) -> None:
 
 
 def _record_login_success(ip: str) -> None:
-    """Clear failure counter for the given IP on successful login."""
+    """登录成功时清空该 IP 的失败计数。"""
     _login_attempts.pop(ip, None)
 
 
@@ -279,7 +275,7 @@ async def login_local(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):
-    """Local email/password login."""
+    """使用本地邮箱/密码登录。"""
     client_ip = _get_client_ip(request)
     _check_rate_limit(client_ip)
 
@@ -304,10 +300,10 @@ async def login_local(
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(request: Request, response: Response, body: RegisterRequest):
-    """Register a new user account (always 'user' role).
+    """注册新用户账号（始终为 ``user`` 角色）。
 
-    The first admin is created explicitly through /initialize. This endpoint creates regular users.
-    Auto-login by setting the session cookie.
+    首个管理员账号由 ``/initialize`` 端点显式创建，本端点仅用于创建普通用户。
+    注册成功后会自动设置会话 cookie 实现自动登录。
     """
     try:
         user = await get_local_provider().create_user(email=body.email, password=body.password, system_role="user")
@@ -325,20 +321,20 @@ async def register(request: Request, response: Response, body: RegisterRequest):
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(request: Request, response: Response):
-    """Logout current user by clearing the cookie."""
+    """通过清除 cookie 让当前用户登出。"""
     response.delete_cookie(key="access_token", secure=is_secure_request(request), samesite="lax")
     return MessageResponse(message="Successfully logged out")
 
 
 @router.post("/change-password", response_model=MessageResponse)
 async def change_password(request: Request, response: Response, body: ChangePasswordRequest):
-    """Change password for the currently authenticated user.
+    """修改当前已认证用户的密码。
 
-    Also handles the first-boot setup flow:
-    - If new_email is provided, updates email (checks uniqueness)
-    - If user.needs_setup is True and new_email is given, clears needs_setup
-    - Always increments token_version to invalidate old sessions
-    - Re-issues session cookie with new token_version
+    同时也用于首次启动时的引导流程：
+    - 若提供 ``new_email``，则更新邮箱（会校验唯一性）
+    - 若 ``user.needs_setup`` 为 ``True`` 且提供了 ``new_email``，则清除 ``needs_setup`` 标记
+    - 始终自增 ``token_version`` 以作废旧的会话
+    - 用新的 ``token_version`` 重新签发会话 cookie
     """
     from app.gateway.auth.password import hash_password_async, verify_password_async
 
@@ -378,7 +374,7 @@ async def change_password(request: Request, response: Response, body: ChangePass
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(request: Request):
-    """Get current authenticated user info."""
+    """获取当前已认证用户的信息。"""
     user = await get_current_user_from_request(request)
     return UserResponse(id=str(user.id), email=user.email, system_role=user.system_role, needs_setup=user.needs_setup)
 
@@ -396,7 +392,7 @@ _SETUP_STATUS_INFLIGHT_GUARD = asyncio.Lock()
 
 @router.get("/setup-status")
 async def setup_status(request: Request):
-    """Check if an admin account exists. Returns needs_setup=True when no admin exists."""
+    """检查系统中是否存在管理员账号，不存在时返回 ``needs_setup=True``。"""
     client_ip = _get_client_ip(request)
     now = time.time()
 
@@ -430,6 +426,7 @@ async def setup_status(request: Request):
                         del _SETUP_STATUS_CACHE[k]
 
             async def _compute_setup_status() -> dict:
+                """统计当前管理员数量并返回 ``needs_setup`` 标记。"""
                 admin_count = await get_local_provider().count_admin_users()
                 return {"needs_setup": admin_count == 0}
 
@@ -452,7 +449,8 @@ async def setup_status(request: Request):
 
 
 class InitializeAdminRequest(BaseModel):
-    """Request model for first-boot admin account creation."""
+    """首次启动管理员账户创建请求模型。"""
+
 
     email: EmailStr
     password: str = Field(..., min_length=8)
@@ -462,13 +460,10 @@ class InitializeAdminRequest(BaseModel):
 
 @router.post("/initialize", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def initialize_admin(request: Request, response: Response, body: InitializeAdminRequest):
-    """Create the first admin account on initial system setup.
+    """在系统首次启动时创建第一个管理员账号。
 
-    Only callable when no admin exists. Returns 409 Conflict if an admin
-    already exists.
-
-    On success, the admin account is created with ``needs_setup=False`` and
-    the session cookie is set.
+    仅在当前尚无管理员时可用。若已存在管理员，则返回 409 Conflict。
+    成功时，会以 ``needs_setup=False`` 创建管理员账号，并设置会话 cookie。
     """
     admin_count = await get_local_provider().count_admin_users()
     if admin_count > 0:
@@ -497,10 +492,10 @@ async def initialize_admin(request: Request, response: Response, body: Initializ
 
 @router.get("/oauth/{provider}")
 async def oauth_login(provider: str):
-    """Initiate OAuth login flow.
+    """启动 OAuth 登录流程。
 
-    Redirects to the OAuth provider's authorization URL.
-    Currently a placeholder - requires OAuth provider implementation.
+    重定向到 OAuth 提供方的授权 URL。
+    当前是占位实现，需要接入具体的 OAuth provider。
     """
     if provider not in ["github", "google"]:
         raise HTTPException(
@@ -516,10 +511,9 @@ async def oauth_login(provider: str):
 
 @router.get("/callback/{provider}")
 async def oauth_callback(provider: str, code: str, state: str):
-    """OAuth callback endpoint.
+    """OAuth 回调端点。
 
-    Handles the OAuth provider's callback after user authorization.
-    Currently a placeholder.
+    处理用户授权后 OAuth provider 的回调请求。当前是占位实现。
     """
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,

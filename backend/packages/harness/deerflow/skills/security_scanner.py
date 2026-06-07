@@ -1,4 +1,4 @@
-"""Security screening for agent-managed skill writes."""
+"""对 Agent 发起的技能写入做安全扫描。"""
 
 from __future__ import annotations
 
@@ -17,11 +17,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ScanResult:
+    """安全扫描结果。
+
+    Attributes:
+        decision: 取值 ``allow`` / ``warn`` / ``block``。
+        reason: 人类可读的判断理由。
+    """
+
     decision: str
     reason: str
 
 
 def _extract_json_object(raw: str) -> dict | None:
+    """从模型原始输出中提取 JSON 对象,容忍 markdown 围栏与多行输出。"""
     raw = raw.strip()
 
     # Strip markdown code fences (```json ... ``` or ``` ... ```)
@@ -68,7 +76,17 @@ def _extract_json_object(raw: str) -> dict | None:
 
 
 async def scan_skill_content(content: str, *, executable: bool = False, location: str = SKILL_MD_FILE, app_config: AppConfig | None = None) -> ScanResult:
-    """Screen skill content before it is written to disk."""
+    """在技能内容写入磁盘前进行安全审查。
+
+    Args:
+        content: 待扫描的文本内容。
+        executable: 内容是否可执行(如脚本),影响失败回退策略。
+        location: 调用方提供的定位信息,用于提示。
+        app_config: 可选应用配置;默认通过 :func:`get_app_config` 读取。
+
+    Returns:
+        :class:`ScanResult`;模型调用或解析失败时返回保守的 ``block``。
+    """
     rubric = (
         "You are a security reviewer for AI agent skills. "
         "Classify the content as allow, warn, or block. "

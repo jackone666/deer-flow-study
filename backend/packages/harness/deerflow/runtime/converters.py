@@ -1,8 +1,8 @@
-"""Pure functions to convert LangChain message objects to OpenAI Chat Completions format.
+"""将 LangChain 消息对象转换为 OpenAI Chat Completions 格式的纯函数。
 
-Utility for translating LangChain message types to OpenAI-compatible dicts.
-Not currently wired into RunJournal (which uses message.model_dump() directly),
-but available for consumers that need the OpenAI wire format.
+用于将 LangChain 消息类型翻译为 OpenAI 兼容字典。当前未接入 ``RunJournal``
+（其直接使用 ``message.model_dump()``），但对需要 OpenAI 线路格式的
+消费者开放。
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ _ROLE_MAP = {
 
 
 def langchain_to_openai_message(message: Any) -> dict:
-    """Convert a single LangChain BaseMessage to an OpenAI message dict.
+    """将单条 LangChain ``BaseMessage`` 转换为 OpenAI 消息字典。
 
-    Handles:
-    - HumanMessage → {"role": "user", "content": "..."}
-    - AIMessage (text only) → {"role": "assistant", "content": "..."}
-    - AIMessage (with tool_calls) → {"role": "assistant", "content": null, "tool_calls": [...]}
-    - AIMessage (text + tool_calls) → both content and tool_calls present
-    - AIMessage (list content / multimodal) → content preserved as list
-    - SystemMessage → {"role": "system", "content": "..."}
-    - ToolMessage → {"role": "tool", "tool_call_id": "...", "content": "..."}
+    支持：
+    - ``HumanMessage`` → ``{"role": "user", "content": "..."}``
+    - ``AIMessage``（仅文本）→ ``{"role": "assistant", "content": "..."}``
+    - ``AIMessage``（含 ``tool_calls``）→ ``{"role": "assistant", "content": null, "tool_calls": [...]}``
+    - ``AIMessage``（文本 + ``tool_calls``）→ ``content`` 与 ``tool_calls`` 同时存在
+    - ``AIMessage``（list 内容 / 多模态）→ ``content`` 保留为列表
+    - ``SystemMessage`` → ``{"role": "system", "content": "..."}``
+    - ``ToolMessage`` → ``{"role": "tool", "tool_call_id": "...", "content": "..."}``
     """
     msg_type = getattr(message, "type", "")
     role = _ROLE_MAP.get(msg_type, msg_type)
@@ -72,10 +72,10 @@ def langchain_to_openai_message(message: Any) -> dict:
 
 
 def _infer_finish_reason(message: Any) -> str:
-    """Infer OpenAI finish_reason from an AIMessage.
+    """从 ``AIMessage`` 推断 OpenAI ``finish_reason``。
 
-    Returns "tool_calls" if tool_calls present, else looks in
-    response_metadata.finish_reason, else returns "stop".
+    若存在 ``tool_calls`` 则返回 ``"tool_calls"``；否则在
+    ``response_metadata.finish_reason`` 中查找；最后回退到 ``"stop"``。
     """
     tool_calls = getattr(message, "tool_calls", None) or []
     if tool_calls:
@@ -89,15 +89,15 @@ def _infer_finish_reason(message: Any) -> str:
 
 
 def langchain_to_openai_completion(message: Any) -> dict:
-    """Convert an AIMessage and its metadata to an OpenAI completion response dict.
+    """将 ``AIMessage`` 及其元数据转换为 OpenAI completion 响应字典。
 
     Returns:
-        {
+        ``{
             "id": message.id,
             "model": message.response_metadata.get("model_name"),
             "choices": [{"index": 0, "message": <openai_message>, "finish_reason": <inferred>}],
             "usage": {"prompt_tokens": ..., "completion_tokens": ..., "total_tokens": ...} or None,
-        }
+        }``
     """
     resp_meta = getattr(message, "response_metadata", None) or {}
     model_name = resp_meta.get("model_name") if isinstance(resp_meta, dict) else None
@@ -132,5 +132,5 @@ def langchain_to_openai_completion(message: Any) -> dict:
 
 
 def langchain_messages_to_openai(messages: list) -> list[dict]:
-    """Convert a list of LangChain BaseMessages to OpenAI message dicts."""
+    """将 LangChain ``BaseMessage`` 列表转换为 OpenAI 消息字典列表。"""
     return [langchain_to_openai_message(m) for m in messages]

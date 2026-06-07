@@ -1,16 +1,13 @@
-"""Password hashing utilities with versioned hash format.
+"""带版本号的密码哈希工具。
 
-Hash format: ``$dfv<N>$<bcrypt_hash>`` where ``<N>`` is the version.
+哈希格式：``$dfv<N>$<bcrypt_hash>``，其中 ``<N>`` 为版本号。
 
-- **v1** (legacy): ``bcrypt(password)`` — plain bcrypt, susceptible to
-  72-byte silent truncation.
-- **v2** (current): ``bcrypt(b64(sha256(password)))`` — SHA-256 pre-hash
-  avoids the 72-byte truncation limit so the full password contributes
-  to the hash.
+- **v1**（旧版）：``bcrypt(password)``——纯 bcrypt，存在 72 字节静默截断问题。
+- **v2**（当前）：``bcrypt(b64(sha256(password)))``——SHA-256 预哈希绕开
+  72 字节限制，让完整密码都参与哈希。
 
-Verification auto-detects the version and falls back to v1 for hashes
-without a prefix, so existing deployments upgrade transparently on next
-login.
+校验时自动识别版本；对于无前缀的旧哈希按 v1 处理，因此已有部署可以在
+下次登录时透明地升级。
 """
 
 import asyncio
@@ -25,21 +22,21 @@ _PREFIX_V1 = "$dfv1$"
 
 
 def _pre_hash_v2(password: str) -> bytes:
-    """SHA-256 pre-hash to bypass bcrypt's 72-byte limit."""
+    """SHA-256 预哈希，绕过 bcrypt 的 72 字节上限。"""
     return base64.b64encode(hashlib.sha256(password.encode("utf-8")).digest())
 
 
 def hash_password(password: str) -> str:
-    """Hash a password (current version: v2 — SHA-256 + bcrypt)."""
+    """哈希一个密码（当前版本：v2 —— SHA-256 + bcrypt）。"""
     raw = bcrypt.hashpw(_pre_hash_v2(password), bcrypt.gensalt()).decode("utf-8")
     return f"{_PREFIX_V2}{raw}"
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password, auto-detecting the hash version.
+    """校验密码，自动识别哈希版本。
 
-    Accepts v2 (``$dfv2$…``), v1 (``$dfv1$…``), and bare bcrypt hashes
-    (treated as v1 for backward compatibility with pre-versioning data).
+    支持 v2（``$dfv2$…``）、v1（``$dfv1$…``）以及裸的 bcrypt 哈希
+    （无前缀按 v1 处理，兼容无版本号的旧数据）。
     """
     try:
         if hashed_password.startswith(_PREFIX_V2):
@@ -53,29 +50,27 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
         return bcrypt.checkpw(plain_password.encode("utf-8"), bcrypt_hash.encode("utf-8"))
     except ValueError:
-        # bcrypt raises ValueError for malformed or corrupt hashes (e.g., invalid salt).
-        # Fail closed rather than crashing the request.
+        # bcrypt 在哈希格式错误（例如盐值非法）时会抛出 ValueError。
+        # 失败时返回 False 而不是让请求崩溃。
         return False
 
 
 def needs_rehash(hashed_password: str) -> bool:
-    """Return True if the hash uses an older version and should be rehashed."""
+    """如果哈希版本较旧需要重新哈希，则返回 ``True``。"""
     return not hashed_password.startswith(_PREFIX_V2)
 
 
 async def hash_password_async(password: str) -> str:
-    """Hash a password using bcrypt (non-blocking).
+    """以非阻塞方式哈希密码。
 
-    Wraps the blocking bcrypt operation in a thread pool to avoid
-    blocking the event loop during password hashing.
+    将阻塞的 bcrypt 操作放在线程池中执行，避免在哈希过程中阻塞事件循环。
     """
     return await asyncio.to_thread(hash_password, password)
 
 
 async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash (non-blocking).
+    """以非阻塞方式校验密码。
 
-    Wraps the blocking bcrypt operation in a thread pool to avoid
-    blocking the event loop during password verification.
+    将阻塞的 bcrypt 操作放在线程池中执行，避免在校验过程中阻塞事件循环。
     """
     return await asyncio.to_thread(verify_password, plain_password, hashed_password)

@@ -1,4 +1,4 @@
-"""MCP client using langchain-mcp-adapters."""
+"""基于 langchain-mcp-adapters 的 MCP 客户端构造工具。"""
 
 import logging
 from typing import Any
@@ -9,14 +9,17 @@ logger = logging.getLogger(__name__)
 
 
 def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, Any]:
-    """Build server parameters for MultiServerMCPClient.
+    """为 :class:`MultiServerMCPClient` 构造单个服务器的连接参数。
 
     Args:
-        server_name: Name of the MCP server.
-        config: Configuration for the MCP server.
+        server_name: MCP 服务器名。
+        config: 该服务器的 :class:`McpServerConfig`。
 
     Returns:
-        Dictionary of server parameters for langchain-mcp-adapters.
+        适用于 langchain-mcp-adapters 的参数字典。
+
+    Raises:
+        ValueError: 必填字段缺失或传输类型不支持。
     """
     transport_type = config.type or "stdio"
     params: dict[str, Any] = {"transport": transport_type}
@@ -43,13 +46,13 @@ def build_server_params(server_name: str, config: McpServerConfig) -> dict[str, 
 
 
 def build_servers_config(extensions_config: ExtensionsConfig) -> dict[str, dict[str, Any]]:
-    """Build servers configuration for MultiServerMCPClient.
+    """为 :class:`MultiServerMCPClient` 构造全部已启用 MCP 服务器的配置。
 
     Args:
-        extensions_config: Extensions configuration containing all MCP servers.
+        extensions_config: 包含所有 MCP 服务器的扩展配置。
 
     Returns:
-        Dictionary mapping server names to their parameters.
+        ``server_name -> 参数`` 的映射;无启用服务器时为空字典。
     """
     enabled_servers = extensions_config.get_enabled_mcp_servers()
 

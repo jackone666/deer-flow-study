@@ -1,22 +1,20 @@
-"""Patched ChatOpenAI that preserves thought_signature for Gemini thinking models.
+"""在 Gemini thinking 模型上保留 ``thought_signature`` 的 ``ChatOpenAI`` 补丁。
 
-When using Gemini with thinking enabled via an OpenAI-compatible gateway (e.g.
-Vertex AI, Google AI Studio, or any proxy), the API requires that the
-``thought_signature`` field on tool-call objects is echoed back verbatim in
-every subsequent request.
+当通过 OpenAI 兼容网关（Vertex AI、Google AI Studio 或任何代理）
+使用启用 thinking 的 Gemini 时，API 要求 tool-call 对象上的
+``thought_signature`` 字段在每个后续请求中原样回传。
 
-The OpenAI-compatible gateway stores the raw tool-call dicts (including
-``thought_signature``) in ``additional_kwargs["tool_calls"]``, but standard
-``langchain_openai.ChatOpenAI`` only serialises the standard fields (``id``,
-``type``, ``function``) into the outgoing payload, silently dropping the
-signature.  That causes an HTTP 400 ``INVALID_ARGUMENT`` error:
+OpenAI 兼容网关会把包含 ``thought_signature`` 的原始 tool-call 字典
+存放在 ``additional_kwargs["tool_calls"]`` 中，但标准
+``langchain_openai.ChatOpenAI`` 在序列化出站负载时只保留
+``id``/``type``/``function`` 等标准字段，会静默丢掉签名，
+导致 HTTP 400 ``INVALID_ARGUMENT`` 错误：
 
     Unable to submit request because function call `<tool>` in the N. content
     block is missing a `thought_signature`.
 
-This module fixes the problem by overriding ``_get_request_payload`` to
-re-inject tool-call signatures back into the outgoing payload for any assistant
-message that originally carried them.
+本模块通过重写 ``_get_request_payload``，在出站负载中对携带
+``thought_signature`` 的 assistant 消息重新注入签名来解决该问题。
 """
 
 from __future__ import annotations
@@ -31,15 +29,14 @@ from deerflow.models.assistant_payload_replay import restore_assistant_payloads
 
 
 class PatchedChatOpenAI(ChatOpenAI):
-    """ChatOpenAI with ``thought_signature`` preservation for Gemini thinking via OpenAI gateway.
+    """为通过 OpenAI 网关使用 Gemini thinking 的场景保留 ``thought_signature`` 的 ``ChatOpenAI``。
 
-    When using Gemini with thinking enabled via an OpenAI-compatible gateway,
-    the API expects ``thought_signature`` to be present on tool-call objects in
-    multi-turn conversations.  This patched version restores those signatures
-    from ``AIMessage.additional_kwargs["tool_calls"]`` into the serialised
-    request payload before it is sent to the API.
+    通过 OpenAI 兼容网关使用启用 thinking 的 Gemini 时，API 期望
+    多轮对话的 tool-call 对象上存在 ``thought_signature``。本补丁类
+    在请求负载发送前，会从 ``AIMessage.additional_kwargs["tool_calls"]``
+    中恢复这些签名。
 
-    Usage in ``config.yaml``::
+    在 ``config.yaml`` 中的用法示例：::
 
         - name: gemini-2.5-pro-thinking
           display_name: Gemini 2.5 Pro (Thinking)
@@ -63,18 +60,23 @@ class PatchedChatOpenAI(ChatOpenAI):
         stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict:
-        """Get request payload with ``thought_signature`` preserved on tool-call objects.
+        """构造请求负载，并保留 tool-call 对象上的 ``thought_signature``。
 
-        Overrides the parent method to re-inject ``thought_signature`` fields
-        on tool-call objects that were stored in
-        ``additional_kwargs["tool_calls"]`` by LangChain but dropped during
-        serialisation.
+        重写父类方法，把 LangChain 存放在 ``additional_kwargs["tool_calls"]``
+        中、但序列化时被丢弃的 ``thought_signature`` 字段重新注入。
+
+        Args:
+            input_: LangChain 模型输入。
+            stop: 可选的停止词列表。
+            **kwargs: 透传给父方法的额外参数。
+
+        Returns:
+            dict: 准备发送给 provider 的请求负载。
         """
-        # Capture the original LangChain messages *before* conversion so we can
-        # access fields that the serialiser might drop.
+        # 在转换前先捕获原始 LangChain 消息，以便访问序列化时可能丢失的字段。
         original_messages = self._convert_input(input_).to_messages()
 
-        # Obtain the base payload from the parent implementation.
+        # 由父实现得到基础负载。
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
 
         restore_assistant_payloads(payload.get("messages", []), original_messages, _restore_tool_call_signatures)
@@ -83,17 +85,20 @@ class PatchedChatOpenAI(ChatOpenAI):
 
 
 def _restore_tool_call_signatures(payload_msg: dict, orig_msg: AIMessage) -> None:
-    """Re-inject ``thought_signature`` onto tool-call objects in *payload_msg*.
+    """把 ``thought_signature`` 重新注入 ``payload_msg`` 的 tool-call 对象。
 
-    When the Gemini OpenAI-compatible gateway returns a response with function
-    calls, each tool-call object may carry a ``thought_signature``.  LangChain
-    stores the raw tool-call dicts in ``additional_kwargs["tool_calls"]`` but
-    only serialises the standard fields (``id``, ``type``, ``function``) into
-    the outgoing payload, silently dropping the signature.
+    当 Gemini 的 OpenAI 兼容网关返回包含函数调用的响应时，每个
+    tool-call 对象可能携带一个 ``thought_signature``。LangChain 会
+    把原始的 tool-call 字典存放在 ``additional_kwargs["tool_calls"]``，
+    但只在序列化出站负载时保留标准字段（``id``/``type``/``function``），
+    静默丢弃签名。
 
-    This function matches raw tool-call entries (by ``id``, falling back to
-    positional order) and copies the signature back onto the serialised
-    payload entries.
+    本函数按 ``id`` 匹配原始 tool-call（无法匹配时回退到位置序），
+    并把签名复制回序列化后的负载条目。
+
+    Args:
+        payload_msg: 序列化后的 assistant 消息字典（原地修改）。
+        orig_msg: 原始 :class:`AIMessage`。
     """
     raw_tool_calls: list[dict] = orig_msg.additional_kwargs.get("tool_calls") or []
     payload_tool_calls: list[dict] = payload_msg.get("tool_calls") or []
@@ -101,7 +106,7 @@ def _restore_tool_call_signatures(payload_msg: dict, orig_msg: AIMessage) -> Non
     if not raw_tool_calls or not payload_tool_calls:
         return
 
-    # Build an id → raw_tc lookup for efficient matching.
+    # 构造 id → raw_tc 映射以加速匹配。
     raw_by_id: dict[str, dict] = {}
     for raw_tc in raw_tool_calls:
         tc_id = raw_tc.get("id")
@@ -109,7 +114,7 @@ def _restore_tool_call_signatures(payload_msg: dict, orig_msg: AIMessage) -> Non
             raw_by_id[tc_id] = raw_tc
 
     for idx, payload_tc in enumerate(payload_tool_calls):
-        # Try matching by id first, then fall back to positional.
+        # 先按 id 匹配，再回退到位置序。
         raw_tc = raw_by_id.get(payload_tc.get("id", ""))
         if raw_tc is None and idx < len(raw_tool_calls):
             raw_tc = raw_tool_calls[idx]
@@ -117,7 +122,7 @@ def _restore_tool_call_signatures(payload_msg: dict, orig_msg: AIMessage) -> Non
         if raw_tc is None:
             continue
 
-        # The gateway may use either snake_case or camelCase.
+        # 网关可能使用 snake_case 或 camelCase 字段名。
         sig = raw_tc.get("thought_signature") or raw_tc.get("thoughtSignature")
         if sig:
             payload_tc["thought_signature"] = sig

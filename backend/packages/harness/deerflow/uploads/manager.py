@@ -1,7 +1,7 @@
-"""Shared upload management logic.
+"""共享的上传管理逻辑。
 
-Pure business logic — no FastAPI/HTTP dependencies.
-Both Gateway and Client delegate to these functions.
+纯业务逻辑，不依赖 FastAPI/HTTP。Gateway 与 Client 都委托给本模块中的
+函数，以便在两条链路之间复用同一套上传目录与文件安全规则。
 """
 
 import errno
@@ -16,11 +16,11 @@ from deerflow.runtime.user_context import get_effective_user_id
 
 
 class PathTraversalError(ValueError):
-    """Raised when a path escapes its allowed base directory."""
+    """当路径逃逸出允许的基础目录时抛出。"""
 
 
 class UnsafeUploadPathError(ValueError):
-    """Raised when an upload destination is not a safe regular file path."""
+    """当上传目标不是一个安全的常规文件路径时抛出。"""
 
 
 # thread_id must be alphanumeric, hyphens, underscores, or dots only.
@@ -28,41 +28,62 @@ _SAFE_THREAD_ID = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 
 def validate_thread_id(thread_id: str) -> None:
-    """Reject thread IDs containing characters unsafe for filesystem paths.
+    """拒绝包含对文件系统不安全字符的 thread ID。
 
     Raises:
-        ValueError: If thread_id is empty or contains unsafe characters.
+        ValueError: 当 ``thread_id`` 为空或含有不安全字符时。
     """
     if not thread_id or not _SAFE_THREAD_ID.match(thread_id):
         raise ValueError(f"Invalid thread_id: {thread_id!r}")
 
 
 def get_uploads_dir(thread_id: str) -> Path:
-    """Return the uploads directory path for a thread (no side effects)."""
+    """返回指定 thread 的 uploads 目录路径（不会创建目录或产生副作用）。
+
+    Args:
+        thread_id: 当前 thread 的 ID。
+
+    Returns:
+        uploads 目录的 :class:`Path` 对象。
+
+    Raises:
+        ValueError: 当 ``thread_id`` 非法时。
+    """
     validate_thread_id(thread_id)
     return get_paths().sandbox_uploads_dir(thread_id, user_id=get_effective_user_id())
 
 
 def ensure_uploads_dir(thread_id: str) -> Path:
-    """Return the uploads directory for a thread, creating it if needed."""
+    """返回指定 thread 的 uploads 目录，必要时自动创建。
+
+    Args:
+        thread_id: 当前 thread 的 ID。
+
+    Returns:
+        uploads 目录的 :class:`Path` 对象（保证目录已存在）。
+
+    Raises:
+        ValueError: 当 ``thread_id`` 非法时。
+        OSError: 当底层 ``mkdir`` 失败时。
+    """
     base = get_uploads_dir(thread_id)
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 def normalize_filename(filename: str) -> str:
-    """Sanitize a filename by extracting its basename.
+    """通过提取 basename 来清洗文件名。
 
-    Strips any directory components and rejects traversal patterns.
+    会剥离目录成分并拒绝穿越模式。
 
     Args:
-        filename: Raw filename from user input (may contain path components).
+        filename: 来自用户输入的原始文件名（可能含路径成分）。
 
     Returns:
-        Safe filename (basename only).
+        安全的文件名（仅 basename）。
 
     Raises:
-        ValueError: If filename is empty or resolves to a traversal pattern.
+        ValueError: 当 ``filename`` 为空或最终为穿越模式时。
     """
     if not filename:
         raise ValueError("Filename is empty")
@@ -79,16 +100,16 @@ def normalize_filename(filename: str) -> str:
 
 
 def claim_unique_filename(name: str, seen: set[str]) -> str:
-    """Generate a unique filename by appending ``_N`` suffix on collision.
+    """在发生冲突时通过追加 ``_N`` 后缀生成一个唯一的文件名。
 
-    Automatically adds the returned name to *seen* so callers don't need to.
+    返回的最终名称会自动加入 ``seen``，调用方无需再自行维护。
 
     Args:
-        name: Candidate filename.
-        seen: Set of filenames already claimed (mutated in place).
+        name: 候选文件名。
+        seen: 已被占用的文件名集合（会被原地修改）。
 
     Returns:
-        A filename not present in *seen* (already added to *seen*).
+        一个不在 ``seen`` 中的新文件名（已加入 ``seen``）。
     """
     if name not in seen:
         seen.add(name)
@@ -104,10 +125,14 @@ def claim_unique_filename(name: str, seen: set[str]) -> str:
 
 
 def validate_path_traversal(path: Path, base: Path) -> None:
-    """Verify that *path* is inside *base*.
+    """校验 ``path`` 是否位于 ``base`` 之内。
+
+    Args:
+        path: 待校验的路径。
+        base: 允许的根目录。
 
     Raises:
-        PathTraversalError: If a path traversal is detected.
+        PathTraversalError: 当检测到路径穿越时。
     """
     try:
         path.resolve().relative_to(base.resolve())
@@ -116,16 +141,29 @@ def validate_path_traversal(path: Path, base: Path) -> None:
 
 
 def open_upload_file_no_symlink(base_dir: Path, filename: str) -> tuple[Path, object]:
-    """Open an upload destination for safe streaming writes.
+    """打开一个上传目标文件以进行安全的流式写入。
 
-    Upload directories may be mounted into local sandboxes. A sandbox process can
-    therefore leave a symlink at a future upload filename. Normal ``Path.write_bytes``
-    follows that link and can overwrite files outside the uploads directory with
-    gateway privileges. This helper rejects symlink destinations using ``O_NOFOLLOW``
-    on POSIX. On Windows (which lacks ``O_NOFOLLOW``), it uses dual ``lstat`` checks
-    and ``fstat`` validation after ``open()`` to reduce the TOCTOU window; this does
-    not eliminate all races but makes exploitation significantly harder. Path-traversal
-    validation prevents escapes from *base_dir* in both cases.
+    上传目录可能被挂载到本地 sandbox 中，沙箱进程因此可能在未来的上传
+    文件名上留下符号链接。普通的 ``Path.write_bytes`` 会跟随该链接并
+    以 gateway 权限覆写 uploads 目录之外的文件，存在严重安全风险。
+
+    - 在 POSIX 上，本函数使用 ``O_NOFOLLOW`` 拒绝符号链接目标；
+    - 在没有 ``O_NOFOLLOW`` 的 Windows 上，使用双重 ``lstat`` 加
+      ``open()`` 之后的 ``fstat`` 校验，尽量缩短 TOCTOU 窗口；虽然
+      不能完全消除竞态，但显著提高了利用难度。
+    - 在两种平台上都会执行路径穿越校验，防止逃出 ``base_dir``。
+
+    Args:
+        base_dir: 上传目录。
+        filename: 用户输入的文件名（会被 :func:`normalize_filename` 规范化）。
+
+    Returns:
+        ``(目标文件路径, 打开的文件对象)`` 元组。调用方负责关闭文件对象。
+
+    Raises:
+        UnsafeUploadPathError: 当目标不是常规文件、存在链接或包含不安全字符时。
+        PathTraversalError: 当目标逃出 ``base_dir`` 时。
+        OSError: 其他底层 I/O 错误。
     """
     safe_name = normalize_filename(filename)
     dest = base_dir / safe_name
@@ -210,7 +248,23 @@ def open_upload_file_no_symlink(base_dir: Path, filename: str) -> tuple[Path, ob
 
 
 def write_upload_file_no_symlink(base_dir: Path, filename: str, data: bytes) -> Path:
-    """Write upload bytes without following a pre-existing destination symlink."""
+    """以不跟随目标符号链接的方式写入上传字节。
+
+    实际行为由 :func:`open_upload_file_no_symlink` 保证，参见其说明。
+
+    Args:
+        base_dir: 上传目录。
+        filename: 目标文件名。
+        data: 待写入的字节内容。
+
+    Returns:
+        写入后的目标文件路径。
+
+    Raises:
+        UnsafeUploadPathError: 当目标不安全时。
+        PathTraversalError: 当目标逃出 ``base_dir`` 时。
+        OSError: 其他底层 I/O 错误。
+    """
     dest, fh = open_upload_file_no_symlink(base_dir, filename)
     with fh:
         fh.write(data)
@@ -218,15 +272,15 @@ def write_upload_file_no_symlink(base_dir: Path, filename: str, data: bytes) -> 
 
 
 def list_files_in_dir(directory: Path) -> dict:
-    """List files (not directories) in *directory*.
+    """列出目录中的文件（不含子目录）。
 
     Args:
-        directory: Directory to scan.
+        directory: 待扫描的目录。
 
     Returns:
-        Dict with "files" list (sorted by name) and "count".
-        Each file entry has ``size`` as *int* (bytes).  Call
-        :func:`enrich_file_listing` to add virtual / artifact URLs.
+        形如 ``{"files": [...], "count": int}`` 的字典，``files`` 按名称
+        升序排列，每条记录包含 ``size``（int，字节）等字段。调用
+        :func:`enrich_file_listing` 可以进一步添加 virtual / artifact URL。
     """
     if not directory.is_dir():
         return {"files": [], "count": 0}
@@ -250,23 +304,23 @@ def list_files_in_dir(directory: Path) -> dict:
 
 
 def delete_file_safe(base_dir: Path, filename: str, *, convertible_extensions: set[str] | None = None) -> dict:
-    """Delete a file inside *base_dir* after path-traversal validation.
+    """在路径穿越校验通过后删除 ``base_dir`` 中的文件。
 
-    If *convertible_extensions* is provided and the file's extension matches,
-    the companion ``.md`` file is also removed (if it exists).
+    当传入 ``convertible_extensions`` 且文件后缀匹配时，对应的 ``.md``
+    副产物（若存在）也会被一并清理。
 
     Args:
-        base_dir: Directory containing the file.
-        filename: Name of file to delete.
-        convertible_extensions: Lowercase extensions (e.g. ``{".pdf", ".docx"}``)
-            whose companion markdown should be cleaned up.
+        base_dir: 包含待删文件的目录。
+        filename: 待删除的文件名。
+        convertible_extensions: 小写后缀集合（如 ``{".pdf", ".docx"}``），
+            这些文件的同 ``.md`` 副产物会一并删除。
 
     Returns:
-        Dict with success and message.
+        包含 ``success`` 与 ``message`` 的字典。
 
     Raises:
-        FileNotFoundError: If the file does not exist.
-        PathTraversalError: If path traversal is detected.
+        FileNotFoundError: 当文件不存在时。
+        PathTraversalError: 当检测到路径穿越时。
     """
     file_path = (base_dir / filename).resolve()
     validate_path_traversal(file_path, base_dir)
@@ -284,22 +338,44 @@ def delete_file_safe(base_dir: Path, filename: str, *, convertible_extensions: s
 
 
 def upload_artifact_url(thread_id: str, filename: str) -> str:
-    """Build the artifact URL for a file in a thread's uploads directory.
+    """为 thread uploads 目录中的文件构造 artifact URL。
 
-    *filename* is percent-encoded so that spaces, ``#``, ``?`` etc. are safe.
+    ``filename`` 会做 percent-encode，保证空格、``#``、``?`` 等字符在 URL
+    中安全。
+
+    Args:
+        thread_id: 当前 thread 的 ID。
+        filename: 文件名。
+
+    Returns:
+        形如 ``/api/threads/<thread_id>/artifacts/.../uploads/<filename>`` 的 URL。
     """
     return f"/api/threads/{thread_id}/artifacts{VIRTUAL_PATH_PREFIX}/uploads/{quote(filename, safe='')}"
 
 
 def upload_virtual_path(filename: str) -> str:
-    """Build the virtual path for a file in the uploads directory."""
+    """为 uploads 目录中的文件构造虚拟路径。
+
+    Args:
+        filename: 文件名。
+
+    Returns:
+        形如 ``<VIRTUAL_PATH_PREFIX>/uploads/<filename>`` 的虚拟路径。
+    """
     return f"{VIRTUAL_PATH_PREFIX}/uploads/{filename}"
 
 
 def enrich_file_listing(result: dict, thread_id: str) -> dict:
-    """Add virtual paths and artifact URLs on a listing result.
+    """为文件列表结果补充虚拟路径和 artifact URL。
 
-    Mutates *result* in place and returns it for convenience.
+    会原地修改 ``result`` 并将其返回，便于链式调用。
+
+    Args:
+        result: :func:`list_files_in_dir` 输出的字典。
+        thread_id: 当前 thread 的 ID。
+
+    Returns:
+        每条 ``files`` 记录新增 ``virtual_path`` 与 ``artifact_url`` 字段的字典。
     """
     for f in result["files"]:
         filename = f["filename"]

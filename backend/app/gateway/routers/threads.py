@@ -1,13 +1,12 @@
-"""Thread CRUD, state, and history endpoints.
+"""线程的 CRUD、状态与历史端点。
 
-Combines the existing thread-local filesystem cleanup with LangGraph
-Platform-compatible thread management backed by the checkpointer.
+将现有的线程本地文件系统清理与由 checkpointer 支撑的 LangGraph Platform
+兼容的线程管理整合在一起。
 
-Channel values returned in state responses are serialized through
-:func:`deerflow.runtime.serialization.serialize_channel_values` to
-ensure LangChain message objects are converted to JSON-safe dicts
-matching the LangGraph Platform wire format expected by the
-``useStream`` React hook.
+状态响应中返回的 channel values 都会经过
+:func:`deerflow.runtime.serialization.serialize_channel_values` 序列化，
+以保证 LangChain 的消息对象被转换为符合 LangGraph Platform 线协议、
+可被 ``useStream`` React Hook 直接消费的 JSON 安全字典。
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ _SERVER_RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"owner_id", "user_id
 
 
 def _strip_reserved_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Return ``metadata`` with server-controlled keys removed."""
+    """返回移除了服务端控制键之后的 ``metadata`` 副本。"""
     if not metadata:
         return metadata or {}
     return {k: v for k, v in metadata.items() if k not in _SERVER_RESERVED_METADATA_KEYS}
@@ -54,14 +53,16 @@ def _strip_reserved_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class ThreadDeleteResponse(BaseModel):
-    """Response model for thread cleanup."""
+    """线程清理的响应模型。"""
+
 
     success: bool
     message: str
 
 
 class ThreadResponse(BaseModel):
-    """Response model for a single thread."""
+    """单个线程的响应模型。"""
+
 
     thread_id: str = Field(description="Unique thread identifier")
     status: str = Field(default="idle", description="Thread status: idle, busy, interrupted, error")
@@ -73,7 +74,8 @@ class ThreadResponse(BaseModel):
 
 
 class ThreadCreateRequest(BaseModel):
-    """Request body for creating a thread."""
+    """创建线程的请求体。"""
+
 
     thread_id: str | None = Field(default=None, description="Optional thread ID (auto-generated if omitted)")
     assistant_id: str | None = Field(default=None, description="Associate thread with an assistant")
@@ -83,7 +85,8 @@ class ThreadCreateRequest(BaseModel):
 
 
 class ThreadSearchRequest(BaseModel):
-    """Request body for searching threads."""
+    """搜索线程的请求体。"""
+
 
     metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata filter (exact match)")
     limit: int = Field(default=100, ge=1, le=1000, description="Maximum results")
@@ -93,10 +96,10 @@ class ThreadSearchRequest(BaseModel):
     @field_validator("metadata")
     @classmethod
     def _validate_metadata_filters(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Reject filter entries the SQL backend cannot compile.
+        """拒绝 SQL 后端无法编译的过滤条目。
 
-        Enforces consistent behaviour across SQL and memory backends.
-        See ``deerflow.persistence.json_compat`` for the shared validators.
+        用以保证 SQL 与内存后端行为一致。共享的校验器详见
+        ``deerflow.persistence.json_compat``。
         """
         if not v:
             return v
@@ -114,7 +117,8 @@ class ThreadSearchRequest(BaseModel):
 
 
 class ThreadStateResponse(BaseModel):
-    """Response model for thread state."""
+    """线程状态的响应模型。"""
+
 
     values: dict[str, Any] = Field(default_factory=dict, description="Current channel values")
     next: list[str] = Field(default_factory=list, description="Next tasks to execute")
@@ -127,7 +131,8 @@ class ThreadStateResponse(BaseModel):
 
 
 class ThreadPatchRequest(BaseModel):
-    """Request body for patching thread metadata."""
+    """线程元数据部分更新请求体。"""
+
 
     metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata to merge")
 
@@ -135,7 +140,8 @@ class ThreadPatchRequest(BaseModel):
 
 
 class ThreadStateUpdateRequest(BaseModel):
-    """Request body for updating thread state (human-in-the-loop resume)."""
+    """线程状态更新请求体（人在环路恢复）。"""
+
 
     values: dict[str, Any] | None = Field(default=None, description="Channel values to merge")
     checkpoint_id: str | None = Field(default=None, description="Checkpoint to branch from")
@@ -144,7 +150,8 @@ class ThreadStateUpdateRequest(BaseModel):
 
 
 class HistoryEntry(BaseModel):
-    """Single checkpoint history entry."""
+    """单个 checkpoint 历史条目。"""
+
 
     checkpoint_id: str
     parent_checkpoint_id: str | None = None
@@ -155,7 +162,8 @@ class HistoryEntry(BaseModel):
 
 
 class ThreadHistoryRequest(BaseModel):
-    """Request body for checkpoint history."""
+    """checkpoint 历史请求体。"""
+
 
     limit: int = Field(default=10, ge=1, le=100, description="Maximum entries")
     before: str | None = Field(default=None, description="Cursor for pagination")
@@ -167,14 +175,14 @@ class ThreadHistoryRequest(BaseModel):
 
 
 def _delete_thread_data(thread_id: str, paths: Paths | None = None, *, user_id: str | None = None) -> ThreadDeleteResponse:
-    """Delete local persisted filesystem data for a thread."""
+    """删除线程在本地持久化的文件系统数据。"""
     path_manager = paths or get_paths()
     try:
         path_manager.delete_thread_dir(thread_id, user_id=user_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except FileNotFoundError:
-        # Not critical — thread data may not exist on disk
+        # 并非关键错误——线程数据可能在磁盘上根本不存在
         logger.debug("No local thread data to delete for %s", sanitize_log_param(thread_id))
         return ThreadDeleteResponse(success=True, message=f"No local data for {thread_id}")
     except Exception as exc:
@@ -186,7 +194,7 @@ def _delete_thread_data(thread_id: str, paths: Paths | None = None, *, user_id: 
 
 
 def _derive_thread_status(checkpoint_tuple) -> str:
-    """Derive thread status from checkpoint metadata."""
+    """根据检查点元数据推导线程状态。"""
     if checkpoint_tuple is None:
         return "idle"
     pending_writes = getattr(checkpoint_tuple, "pending_writes", None) or []
@@ -212,11 +220,10 @@ def _derive_thread_status(checkpoint_tuple) -> str:
 @router.delete("/{thread_id}", response_model=ThreadDeleteResponse)
 @require_permission("threads", "delete", owner_check=True, require_existing=True)
 async def delete_thread_data(thread_id: str, request: Request) -> ThreadDeleteResponse:
-    """Delete local persisted filesystem data for a thread.
+    """删除线程在本地持久化的文件系统数据。
 
-    Cleans DeerFlow-managed thread directories, removes checkpoint data,
-    and removes the thread_meta row from the configured ThreadMetaStore
-    (sqlite or memory).
+    清理 DeerFlow 管理的线程目录、删除检查点数据，并从配置的
+    ``ThreadMetaStore``（SQLite 或内存）中删除对应的 ``thread_meta`` 行。
     """
     from app.gateway.deps import get_thread_store
 
@@ -245,11 +252,11 @@ async def delete_thread_data(thread_id: str, request: Request) -> ThreadDeleteRe
 
 @router.post("", response_model=ThreadResponse)
 async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadResponse:
-    """Create a new thread.
+    """创建一个新线程。
 
-    Writes a thread_meta record (so the thread appears in /threads/search)
-    and an empty checkpoint (so state endpoints work immediately).
-    Idempotent: returns the existing record when ``thread_id`` already exists.
+    写入一条 ``thread_meta`` 记录（使线程立即出现在 ``/threads/search`` 中），
+    以及一个空检查点（让状态端点能立即工作）。本操作是幂等的：当 ``thread_id``
+    已存在时返回该现有记录。
     """
     from app.gateway.deps import get_thread_store
 
@@ -310,10 +317,10 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
 
 @router.post("/search", response_model=list[ThreadResponse])
 async def search_threads(body: ThreadSearchRequest, request: Request) -> list[ThreadResponse]:
-    """Search and list threads.
+    """搜索并列出线程。
 
-    Delegates to the configured ThreadMetaStore implementation
-    (SQL-backed for sqlite/postgres, Store-backed for memory mode).
+    委托给配置的 ``ThreadMetaStore`` 实现（SQLite/Postgres 时使用 SQL 后端，
+    内存模式下使用 Store 后端）。
     """
     from app.gateway.deps import get_thread_store
     from deerflow.persistence.thread_meta import InvalidMetadataFilterError
@@ -348,7 +355,7 @@ async def search_threads(body: ThreadSearchRequest, request: Request) -> list[Th
 @router.patch("/{thread_id}", response_model=ThreadResponse)
 @require_permission("threads", "write", owner_check=True, require_existing=True)
 async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Request) -> ThreadResponse:
-    """Merge metadata into a thread record."""
+    """合并元数据到线程记录中。"""
     from app.gateway.deps import get_thread_store
 
     thread_store = get_thread_store(request)
@@ -377,11 +384,11 @@ async def patch_thread(thread_id: str, body: ThreadPatchRequest, request: Reques
 @router.get("/{thread_id}", response_model=ThreadResponse)
 @require_permission("threads", "read", owner_check=True)
 async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
-    """Get thread info.
+    """获取线程信息。
 
-    Reads metadata from the ThreadMetaStore and derives the accurate
-    execution status from the checkpointer.  Falls back to the checkpointer
-    alone for threads that pre-date ThreadMetaStore adoption (backward compat).
+    从 ``ThreadMetaStore`` 读取元数据，并从 checkpointer 推导准确的执行状态。
+    对于早于 ``ThreadMetaStore`` 启用前就已经存在的线程（向后兼容），
+    会回退到只使用 checkpointer。
     """
     from app.gateway.deps import get_thread_store
 
@@ -435,10 +442,9 @@ async def get_thread(thread_id: str, request: Request) -> ThreadResponse:
 @router.get("/{thread_id}/state", response_model=ThreadStateResponse)
 @require_permission("threads", "read", owner_check=True)
 async def get_thread_state(thread_id: str, request: Request) -> ThreadStateResponse:
-    """Get the latest state snapshot for a thread.
+    """获取线程最新的状态快照。
 
-    Channel values are serialized to ensure LangChain message objects
-    are converted to JSON-safe dicts.
+    Channel values 会经过序列化以保证 LangChain 消息对象被转换为 JSON 安全的字典。
     """
     checkpointer = get_checkpointer(request)
 
@@ -487,12 +493,11 @@ async def get_thread_state(thread_id: str, request: Request) -> ThreadStateRespo
 @router.post("/{thread_id}/state", response_model=ThreadStateResponse)
 @require_permission("threads", "write", owner_check=True, require_existing=True)
 async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, request: Request) -> ThreadStateResponse:
-    """Update thread state (e.g. for human-in-the-loop resume or title rename).
+    """更新线程状态（例如用于 human-in-the-loop 恢复或重命名标题）。
 
-    Writes a new checkpoint that merges *body.values* into the latest
-    channel values, then syncs any updated ``title`` field through the
-    ThreadMetaStore abstraction so that ``/threads/search`` reflects the
-    change immediately in both sqlite and memory backends.
+    写入一个新的检查点，把 ``body.values`` 合并进最新的 channel values，
+    随后通过 ``ThreadMetaStore`` 抽象同步任何已更新的 ``title`` 字段，
+    以便 ``/threads/search`` 在 SQLite 与内存两种后端下都能立即反映该变化。
     """
     from app.gateway.deps import get_thread_store
 
@@ -577,13 +582,12 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
 @router.post("/{thread_id}/history", response_model=list[HistoryEntry])
 @require_permission("threads", "read", owner_check=True)
 async def get_thread_history(thread_id: str, body: ThreadHistoryRequest, request: Request) -> list[HistoryEntry]:
-    """Get checkpoint history for a thread.
+    """获取线程的检查点历史。
 
-    Messages are read from the checkpointer's channel values (the
-    authoritative source) and serialized via
-    :func:`~deerflow.runtime.serialization.serialize_channel_values`.
-    Only the latest (first) checkpoint carries the ``messages`` key to
-    avoid duplicating them across every entry.
+    消息从 checkpointer 的 channel values（权威来源）中读取，并通过
+    :func:`~deerflow.runtime.serialization.serialize_channel_values` 序列化。
+    只有最新（第一个）检查点会携带 ``messages`` 键，以避免在每条历史中
+    重复出现。
     """
     checkpointer = get_checkpointer(request)
 

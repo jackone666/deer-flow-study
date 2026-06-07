@@ -1,4 +1,11 @@
-"""Abstract base class for sandbox provisioning backends."""
+"""沙箱供应后端的抽象基类与就绪轮询工具。
+
+该模块定义了 :class:`SandboxBackend` 抽象基类,以及
+:func:`wait_for_sandbox_ready` / :func:`wait_for_sandbox_ready_async`
+两个用于在新沙箱创建后等待其 HTTP 健康端点就绪的工具函数。
+具体实现见 :mod:`deerflow.community.aio_sandbox.local_backend` 与
+:mod:`deerflow.community.aio_sandbox.remote_backend`。
+"""
 
 from __future__ import annotations
 
@@ -16,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 def wait_for_sandbox_ready(sandbox_url: str, timeout: int = 30) -> bool:
-    """Poll sandbox health endpoint until ready or timeout.
+    """轮询沙箱健康端点,直到就绪或超时。
 
     Args:
-        sandbox_url: URL of the sandbox (e.g. http://k3s:30001).
-        timeout: Maximum time to wait in seconds.
+        sandbox_url: 沙箱 URL,例如 ``http://k3s:30001``。
+        timeout: 最长等待秒数,默认 30。
 
     Returns:
-        True if sandbox is ready, False otherwise.
+        沙箱在超时前就绪返回 True,否则 False。
     """
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -38,11 +45,18 @@ def wait_for_sandbox_ready(sandbox_url: str, timeout: int = 30) -> bool:
 
 
 async def wait_for_sandbox_ready_async(sandbox_url: str, timeout: int = 30, poll_interval: float = 1.0) -> bool:
-    """Async variant of sandbox readiness polling.
+    """异步版本的沙箱就绪轮询。
 
-    Use this from async runtime paths so sandbox startup waits do not block the
-    event loop. The synchronous ``wait_for_sandbox_ready`` function remains for
-    existing synchronous backend/provider call sites.
+    供异步运行时路径使用,使沙箱启动等待不会阻塞事件循环。同步的
+    :func:`wait_for_sandbox_ready` 仍然保留,供既有同步后端/提供者调用点使用。
+
+    Args:
+        sandbox_url: 沙箱 URL。
+        timeout: 最长等待秒数,默认 30。
+        poll_interval: 两次轮询的最小间隔,默认 1.0。
+
+    Returns:
+        沙箱在超时前就绪返回 True,否则 False。
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -66,79 +80,71 @@ async def wait_for_sandbox_ready_async(sandbox_url: str, timeout: int = 30, poll
 
 
 class SandboxBackend(ABC):
-    """Abstract base for sandbox provisioning backends.
+    """沙箱供应后端抽象基类。
 
-    Two implementations:
-    - LocalContainerBackend: starts Docker/Apple Container locally, manages ports
-    - RemoteSandboxBackend: connects to a pre-existing URL (K8s service, external)
+    现有两种实现:
+    - :class:`LocalContainerBackend`:在本地启动 Docker/Apple Container 并管理端口。
+    - :class:`RemoteSandboxBackend`:连接到已存在的 URL(K8s 服务、外部服务等)。
     """
 
     @abstractmethod
     def create(self, thread_id: str | None, sandbox_id: str, extra_mounts: list[tuple[str, str, bool]] | None = None) -> SandboxInfo:
-        """Create/provision a new sandbox.
+        """创建/供应一个新沙箱。
 
         Args:
-            thread_id: Thread ID for which the sandbox is being created. Useful for backends that want to organize sandboxes by thread.
-            sandbox_id: Deterministic sandbox identifier.
-            extra_mounts: Additional volume mounts as (host_path, container_path, read_only) tuples.
-                Ignored by backends that don't manage containers (e.g., remote).
+            thread_id: 正在创建沙箱的线程 ID;按线程组织沙箱的后端可使用。
+            sandbox_id: 确定性沙箱标识。
+            extra_mounts: 额外卷挂载,``(host_path, container_path, read_only)`` 三元组列表;
+                不管理容器的后端(如远程)可以忽略。
 
         Returns:
-            SandboxInfo with connection details.
+            含连接详情的 :class:`SandboxInfo`。
         """
         ...
 
     @abstractmethod
     def destroy(self, info: SandboxInfo) -> None:
-        """Destroy/cleanup a sandbox and release its resources.
+        """销毁/清理沙箱并释放其资源。
 
         Args:
-            info: The sandbox metadata to destroy.
+            info: 待销毁的沙箱元数据。
         """
         ...
 
     @abstractmethod
     def is_alive(self, info: SandboxInfo) -> bool:
-        """Quick check whether a sandbox is still alive.
-
-        This should be a lightweight check (e.g., container inspect)
-        rather than a full health check.
+        """轻量级存活检查,不应做完整健康检查。
 
         Args:
-            info: The sandbox metadata to check.
+            info: 待检查的沙箱元数据。
 
         Returns:
-            True if the sandbox appears to be alive.
+            沙箱看似存活时返回 True。
         """
         ...
 
     @abstractmethod
     def discover(self, sandbox_id: str) -> SandboxInfo | None:
-        """Try to discover an existing sandbox by its deterministic ID.
-
-        Used for cross-process recovery: when another process started a sandbox,
-        this process can discover it by the deterministic container name or URL.
+        """按确定性 ID 查找已存在的沙箱,用于跨进程恢复。
 
         Args:
-            sandbox_id: The deterministic sandbox ID to look for.
+            sandbox_id: 确定性沙箱 ID。
 
         Returns:
-            SandboxInfo if found and healthy, None otherwise.
+            找到且健康时返回 :class:`SandboxInfo`,否则 None。
         """
         ...
 
     def list_running(self) -> list[SandboxInfo]:
-        """Enumerate all running sandboxes managed by this backend.
+        """枚举该后端管理的所有运行中沙箱。
 
-        Used for startup reconciliation: when the process restarts, it needs
-        to discover containers started by previous processes so they can be
-        adopted into the warm pool or destroyed if idle too long.
+        用于启动协调:进程重启时需要发现由旧进程启动的容器,以便被并入热池
+        或在空闲过长时销毁。
 
-        The default implementation returns an empty list, which is correct
-        for backends that don't manage local containers (e.g., RemoteSandboxBackend
-        delegates lifecycle to the provisioner which handles its own cleanup).
+        默认实现返回空列表,这对不管理本地容器的后端是正确的(例如
+        :class:`RemoteSandboxBackend` 把生命周期交给 provisioner 处理)。
 
         Returns:
-            A list of SandboxInfo for all currently running sandboxes.
+            所有运行中沙箱的 :class:`SandboxInfo` 列表。
         """
         return []

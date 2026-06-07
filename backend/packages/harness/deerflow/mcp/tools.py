@@ -1,4 +1,4 @@
-"""Load MCP tools using langchain-mcp-adapters with stdio session pooling."""
+"""通过 langchain-mcp-adapters 加载 MCP 工具,带 stdio 持久会话池。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_thread_id(runtime: Runtime | None) -> str:
-    """Extract thread_id from the injected tool runtime or LangGraph config."""
+    """从工具 runtime 或 LangGraph config 中提取 ``thread_id``。"""
     if runtime is not None:
         tid = runtime.context.get("thread_id") if runtime.context else None
         if tid is not None:
@@ -39,10 +39,10 @@ def _extract_thread_id(runtime: Runtime | None) -> str:
 
 
 def _convert_call_tool_result(call_tool_result: Any) -> Any:
-    """Convert an MCP CallToolResult to the LangChain ``content_and_artifact`` format.
+    """把 MCP :class:`CallToolResult` 转换为 LangChain ``content_and_artifact`` 形式。
 
-    Implements the same conversion logic as the adapter without relying on
-    the private ``langchain_mcp_adapters.tools._convert_call_tool_result`` symbol.
+    实现与适配器相同的转换逻辑,但不依赖 ``langchain_mcp_adapters.tools`` 中的
+    私有符号。
     """
     from langchain_core.messages import ToolMessage
     from langchain_core.messages.content import create_file_block, create_image_block, create_text_block
@@ -110,14 +110,12 @@ def _make_session_pool_tool(
     connection: dict[str, Any],
     tool_interceptors: list[Any] | None = None,
 ) -> BaseTool:
-    """Wrap an MCP tool so it reuses a persistent session from the pool.
+    """把 MCP 工具包装为使用会话池中持久会话的版本。
 
-    Replaces the per-call session creation with pool-managed sessions scoped
-    by ``(server_name, thread_id)``.  This ensures stateful MCP servers (e.g.
-    Playwright) keep their state across tool calls within the same thread.
-
-    The configured ``tool_interceptors`` (OAuth, custom) are preserved and
-    applied on every call before invoking the pooled session.
+    替代每次调用都新建会话的默认行为,改用按 ``(server_name, thread_id)`` 隔离
+    的池化管理会话,从而让 Playwright 等有状态 MCP 服务器在同线程的连续调用
+    间保持状态。配置的 ``tool_interceptors``(OAuth 或自定义)会被保留并
+    在每次调用前先于会话执行。
     """
     # Strip the server-name prefix to recover the original MCP tool name.
     original_name = tool.name
@@ -131,6 +129,7 @@ def _make_session_pool_tool(
         runtime: Runtime | None = None,
         **arguments: Any,
     ) -> Any:
+        """复用池化会话执行 MCP 工具调用,先串入拦截器链。"""
         thread_id = _extract_thread_id(runtime)
         session = await pool.get_session(server_name, thread_id, connection)
 
@@ -138,6 +137,19 @@ def _make_session_pool_tool(
             from langchain_mcp_adapters.interceptors import MCPToolCallRequest
 
             async def base_handler(request: MCPToolCallRequest) -> Any:
+                """最底层的 MCP 工具调用处理器。
+
+                直接通过池化 ``session`` 调用目标工具,并将拦截器链注入的
+                ``request.headers`` 透传到 MCP ``call`` 的 ``meta.headers``,
+                以便 stdio 传输下 HTTP 风格的头部鉴权信息能够抵达远端。
+
+                Args:
+                    request: 由 langchain-mcp-adapters 组装好的调用请求,
+                        含工具名、参数及拦截器可能注入的 headers。
+
+                Returns:
+                    MCP ``call_tool`` 的原始返回结果。
+                """
                 # Preserve interceptor-injected headers for stdio MCP calls by
                 # forwarding them through MCP call meta.
                 call_kwargs: dict[str, Any] = {}
@@ -153,6 +165,7 @@ def _make_session_pool_tool(
                 outer = handler
 
                 async def wrapped(req: Any, _i: Any = interceptor, _h: Any = outer) -> Any:
+                    """将单个拦截器套到下一层 handler 上,形成拦截器链。"""
                     return await _i(req, _h)
 
                 handler = wrapped
@@ -180,15 +193,13 @@ def _make_session_pool_tool(
 
 
 async def get_mcp_tools() -> list[BaseTool]:
-    """Get all tools from enabled MCP servers.
+    """从所有已启用 MCP 服务器拉取工具列表。
 
-    Tools using stdio transport are wrapped with persistent-session logic so
-    consecutive calls within the same thread reuse the same MCP session.
-    HTTP/SSE tools are returned unwrapped to avoid cross-task TaskGroup
-    cleanup errors.
+    stdio 传输的工具会被包成复用持久会话的版本,使同线程连续调用共享同一会话;
+    HTTP/SSE 工具保持原样返回,以避免跨任务 TaskGroup 清理错误。
 
     Returns:
-        List of LangChain tools from all enabled MCP servers.
+        所有已启用 MCP 服务器的 LangChain 工具列表。
     """
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient

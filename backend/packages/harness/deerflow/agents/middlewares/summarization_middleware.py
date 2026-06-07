@@ -1,4 +1,4 @@
-"""Summarization middleware extensions for DeerFlow."""
+"""DeerFlow 对 LangChain 摘要中间件的扩展。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SummarizationEvent:
-    """Context emitted before conversation history is summarized away."""
+    """在历史消息被摘要前发出的事件上下文。"""
 
     messages_to_summarize: tuple[AnyMessage, ...]
     preserved_messages: tuple[AnyMessage, ...]
@@ -33,13 +33,15 @@ class SummarizationEvent:
 
 @runtime_checkable
 class BeforeSummarizationHook(Protocol):
-    """Hook invoked before summarization removes messages from state."""
+    """在摘要中间件移除消息前触发的钩子。"""
 
-    def __call__(self, event: SummarizationEvent) -> None: ...
+    def __call__(self, event: SummarizationEvent) -> None:
+        """处理一次 ``SummarizationEvent`` 摘要前事件。"""
+        ...
 
 
 def _resolve_thread_id(runtime: Runtime) -> str | None:
-    """Resolve the current thread ID from runtime context or LangGraph config."""
+    """从运行期 context 或 LangGraph 配置中解析当前线程 ID。"""
     thread_id = runtime.context.get("thread_id") if runtime.context else None
     if thread_id is None:
         try:
@@ -51,7 +53,7 @@ def _resolve_thread_id(runtime: Runtime) -> str | None:
 
 
 def _resolve_agent_name(runtime: Runtime) -> str | None:
-    """Resolve the current agent name from runtime context or LangGraph config."""
+    """从运行期 context 或 LangGraph 配置中解析当前 Agent 名称。"""
     agent_name = runtime.context.get("agent_name") if runtime.context else None
     if agent_name is None:
         try:
@@ -63,7 +65,7 @@ def _resolve_agent_name(runtime: Runtime) -> str | None:
 
 
 def _tool_call_path(tool_call: dict[str, Any]) -> str | None:
-    """Best-effort extraction of a file path argument from a read_file-like tool call."""
+    """尽力从 ``read_file`` 类的工具调用中抽取文件路径参数。"""
     args = tool_call.get("args") or {}
     if not isinstance(args, dict):
         return None
@@ -80,13 +82,13 @@ def _clone_ai_message(
     *,
     content: Any | None = None,
 ) -> AIMessage:
-    """Clone an AIMessage while replacing its tool_calls list and optional content."""
+    """克隆 AIMessage 并替换其 ``tool_calls`` 列表与可选的 content。"""
     return clone_ai_message_with_tool_calls(message, tool_calls, content=content)
 
 
 @dataclass
 class _SkillBundle:
-    """Skill-related tool calls and tool results associated with one AIMessage."""
+    """与单个 AIMessage 关联的技能相关工具调用与工具结果。"""
 
     ai_index: int
     skill_tool_indices: tuple[int, ...]
@@ -96,7 +98,7 @@ class _SkillBundle:
 
 
 class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
-    """Summarization middleware with pre-compression hook dispatch and skill rescue."""
+    """在压缩前分发钩子并支持技能恢复的摘要中间件。"""
 
     def __init__(
         self,
@@ -109,6 +111,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         preserve_recent_skill_tokens_per_skill: int = 5_000,
         **kwargs,
     ) -> None:
+        """初始化 self。"""
         super().__init__(*args, **kwargs)
         self._skills_container_path = skills_container_path or "/mnt/skills"
         self._skill_file_read_tool_names = frozenset(skill_file_read_tool_names or {"read_file", "read", "view", "cat"})
@@ -118,12 +121,15 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         self._preserve_recent_skill_tokens_per_skill = max(0, preserve_recent_skill_tokens_per_skill)
 
     def before_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用前同步钩子。"""
         return self._maybe_summarize(state, runtime)
 
     async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用前异步钩子。"""
         return await self._amaybe_summarize(state, runtime)
 
     def _maybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """执行赋值。"""
         messages = state["messages"]
         self._ensure_message_ids(messages)
 
@@ -150,6 +156,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         }
 
     async def _amaybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """执行赋值。"""
         messages = state["messages"]
         self._ensure_message_ids(messages)
 
@@ -177,8 +184,10 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
 
     @override
     def _build_new_messages(self, summary: str) -> list[HumanMessage]:
-        """Override the base implementation to let the human message with the special name 'summary'.
-        And this message will be ignored to display in the frontend, but still can be used as context for the model.
+        """覆盖父类实现，使携带特殊 ``name='summary'`` 的 HumanMessage 在前端不显示，但仍作为模型上下文。
+
+        摘要消息会以 ``name='summary'`` 的人类消息形式出现；前端会据此隐藏
+        展示，但仍能作为模型上下文。
         """
         return [HumanMessage(content=f"Here is a summary of the conversation to date:\n\n{summary}", name="summary")]
 
@@ -187,11 +196,11 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages_to_summarize: list[AnyMessage],
         preserved_messages: list[AnyMessage],
     ) -> tuple[list[AnyMessage], list[AnyMessage]]:
-        """Keep hidden dynamic-context reminders out of summary compression.
+        """将隐藏的动态上下文提醒从摘要压缩中排除。
 
-        These reminders carry the current date and optional memory. If summarization
-        removes them, DynamicContextMiddleware can mistake the summary HumanMessage
-        for the first user message and inject the reminder in the wrong place.
+        这些提醒携带当前日期与可选记忆；若被摘要移除，
+        ``DynamicContextMiddleware`` 可能误把摘要 ``HumanMessage`` 当作首条
+        用户消息而把提醒注入到错误位置。
         """
         reminders = [msg for msg in messages_to_summarize if is_dynamic_context_reminder(msg)]
         if not reminders:
@@ -205,7 +214,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages: list[AnyMessage],
         cutoff_index: int,
     ) -> tuple[list[AnyMessage], list[AnyMessage]]:
-        """Partition like the parent, then rescue recently-loaded skill bundles."""
+        """按父类逻辑划分消息，再对最近加载的技能 bundle 进行恢复。"""
         to_summarize, preserved = self._partition_messages(messages, cutoff_index)
 
         if self._preserve_recent_skill_count == 0 or self._preserve_recent_skill_tokens == 0 or not to_summarize:
@@ -253,7 +262,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages: list[AnyMessage],
         skills_root: str,
     ) -> list[_SkillBundle]:
-        """Locate AIMessage + paired ToolMessage groups that load skill files."""
+        """定位加载技能文件的 AIMessage 与其配对 ToolMessage 组合。"""
         bundles: list[_SkillBundle] = []
         n = len(messages)
         i = 0
@@ -311,7 +320,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         return bundles
 
     def _select_bundles_to_rescue(self, bundles: list[_SkillBundle]) -> list[_SkillBundle]:
-        """Pick bundles to keep, walking newest-first under count/token budgets."""
+        """在数量/Token 预算内，按从新到旧挑选需要保留的 bundle。"""
         selected: list[_SkillBundle] = []
         if not bundles:
             return selected
@@ -339,7 +348,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         return selected
 
     def _is_skill_tool_call(self, tool_call: dict[str, Any], skills_root: str) -> bool:
-        """Return True when ``tool_call`` reads a file under the configured skills root."""
+        """当 ``tool_call`` 读取配置的技能根目录下的文件时返回 ``True``。"""
         name = tool_call.get("name") or ""
         if name not in self._skill_file_read_tool_names:
             return False
@@ -355,6 +364,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         preserved_messages: list[AnyMessage],
         runtime: Runtime,
     ) -> None:
+        """触发所有 ``before_summarization`` 钩子，单个失败不影响其他钩子。"""
         if not self._before_summarization_hooks:
             return
 

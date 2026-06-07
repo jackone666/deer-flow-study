@@ -1,4 +1,4 @@
-"""ChannelManager — consumes inbound messages and dispatches them to the DeerFlow agent via Gateway."""
+"""``ChannelManager`` —— 消费入站消息并通过 Gateway 转发给 DeerFlow 智能体。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ _METADATA_DROP_KEYS = frozenset({"raw_message", "ref_msg"})
 
 
 def _slim_metadata(meta: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow copy of *meta* with known-large keys removed."""
+    """返回 *meta* 的浅拷贝，去掉已知的大体积键。"""
     return {k: v for k, v in meta.items() if k not in _METADATA_DROP_KEYS}
 
 
@@ -69,10 +69,12 @@ INBOUND_FILE_READERS: dict[str, InboundFileReader] = {}
 
 
 def register_inbound_file_reader(channel_name: str, reader: InboundFileReader) -> None:
+    """注册某个渠道专用的入站文件读取器。"""
     INBOUND_FILE_READERS[channel_name] = reader
 
 
 async def _read_http_inbound_file(file_info: dict[str, Any], client: httpx.AsyncClient) -> bytes | None:
+    """通过 HTTP GET 下载一个入站文件，失败返回 ``None``。"""
     url = file_info.get("url")
     if not isinstance(url, str) or not url:
         return None
@@ -83,6 +85,7 @@ async def _read_http_inbound_file(file_info: dict[str, Any], client: httpx.Async
 
 
 async def _read_wecom_inbound_file(file_info: dict[str, Any], client: httpx.AsyncClient) -> bytes | None:
+    """下载企业微信入站文件，必要时用 ``aeskey`` 解密。"""
     data = await _read_http_inbound_file(file_info, client)
     if data is None:
         return None
@@ -101,6 +104,7 @@ async def _read_wecom_inbound_file(file_info: dict[str, Any], client: httpx.Asyn
 
 
 async def _read_wechat_inbound_file(file_info: dict[str, Any], client: httpx.AsyncClient) -> bytes | None:
+    """读取微信入站文件：优先本地路径，其次 HTTP URL。"""
     raw_path = file_info.get("path")
     if isinstance(raw_path, str) and raw_path.strip():
         try:
@@ -121,10 +125,11 @@ register_inbound_file_reader("wechat", _read_wechat_inbound_file)
 
 
 class InvalidChannelSessionConfigError(ValueError):
-    """Raised when IM channel session overrides contain invalid agent config."""
+    """当 IM 渠道会话覆盖中包含无效的智能体配置时抛出。"""
 
 
 def _is_thread_busy_error(exc: BaseException | None) -> bool:
+    """判断异常是否表示 DeerFlow 主题正忙（已有任务在跑）。"""
     if exc is None:
         return False
     if isinstance(exc, ConflictError):
@@ -133,10 +138,12 @@ def _is_thread_busy_error(exc: BaseException | None) -> bool:
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
+    """将 ``Mapping`` 之类输入转成普通字典，否则返回空字典。"""
     return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _merge_dicts(*layers: Any) -> dict[str, Any]:
+    """按顺序合并多个 ``Mapping``，后面的层覆盖前面的键。"""
     merged: dict[str, Any] = {}
     for layer in layers:
         if isinstance(layer, Mapping):
@@ -145,7 +152,7 @@ def _merge_dicts(*layers: Any) -> dict[str, Any]:
 
 
 def _normalize_custom_agent_name(raw_value: str) -> str:
-    """Normalize legacy channel assistant IDs into valid custom agent names."""
+    """将遗留的渠道 ``assistant_id`` 归一化为合法的自定义智能体名称。"""
     normalized = raw_value.strip().lower().replace("_", "-")
     if not normalized:
         raise InvalidChannelSessionConfigError("Channel session assistant_id is empty. Use 'lead_agent' or a valid custom agent name.")
@@ -155,14 +162,14 @@ def _normalize_custom_agent_name(raw_value: str) -> str:
 
 
 def _extract_response_text(result: dict | list) -> str:
-    """Extract the last AI message text from a LangGraph runs.wait result.
+    """从 LangGraph ``runs.wait`` 的结果中抽取最后一条 AI 消息文本。
 
-    ``runs.wait`` returns the final state dict which contains a ``messages``
-    list.  Each message is a dict with at least ``type`` and ``content``.
+    ``runs.wait`` 返回最终状态字典，其中包含 ``messages`` 列表。
+    每条消息至少带有 ``type`` 和 ``content`` 两个字段。
 
-    Handles special cases:
-    - Regular AI text responses
-    - Clarification interrupts (``ask_clarification`` tool messages)
+    处理以下特殊情况：
+    - 普通 AI 文本回复；
+    - ``ask_clarification`` 工具消息对应的澄清中断。
     """
     if isinstance(result, list):
         messages = result
@@ -171,32 +178,32 @@ def _extract_response_text(result: dict | list) -> str:
     else:
         return ""
 
-    # Walk backwards to find usable response text, but stop at the last
-    # human message to avoid returning text from a previous turn.
+    # 倒序遍历以寻找可用的回复文本，但遇到最后一条 human 消息即停止，
+    # 以免返回上一轮的内容。
     for msg in reversed(messages):
         if not isinstance(msg, dict):
             continue
 
         msg_type = msg.get("type")
 
-        # Stop at the last human message — anything before it is a previous turn
+        # 遇到最后一条 human 消息即停止——它之前都属于上一轮。
         if msg_type == "human":
             if _is_hidden_human_control_message(msg):
                 continue
             break
 
-        # Check for tool messages from ask_clarification (interrupt case)
+        # 检查 ask_clarification 工具消息（中断场景）
         if msg_type == "tool" and msg.get("name") == "ask_clarification":
             content = msg.get("content", "")
             if isinstance(content, str) and content:
                 return content
 
-        # Regular AI message with text content
+        # 普通 AI 文本消息
         if msg_type == "ai":
             content = msg.get("content", "")
             if isinstance(content, str) and content:
                 return content
-            # content can be a list of content blocks
+            # content 也可能是内容块列表
             if isinstance(content, list):
                 parts = []
                 for block in content:
@@ -211,6 +218,7 @@ def _extract_response_text(result: dict | list) -> str:
 
 
 def _messages_from_result(result: dict | list) -> list[Any]:
+    """从 ``runs.wait`` 结果中取出 ``messages`` 列表；形状不对则返回空列表。"""
     if isinstance(result, list):
         return result
     if isinstance(result, dict):
@@ -221,6 +229,7 @@ def _messages_from_result(result: dict | list) -> list[Any]:
 
 
 def _current_turn_messages(result: dict | list) -> list[dict[str, Any]]:
+    """返回从最后一条 human 消息之后到结果末尾的所有消息。"""
     messages = _messages_from_result(result)
     current_turn: list[dict[str, Any]] = []
     for msg in reversed(messages):
@@ -234,7 +243,7 @@ def _current_turn_messages(result: dict | list) -> list[dict[str, Any]]:
 
 
 def _has_current_turn_clarification(result: dict | list) -> bool:
-    """Return True only when the current turn's final result is clarification."""
+    """仅当当前轮的最终结果是澄清时返回 ``True``。"""
     for msg in reversed(_current_turn_messages(result)):
         msg_type = msg.get("type")
         if msg_type == "tool":
@@ -252,6 +261,7 @@ def _has_current_turn_clarification(result: dict | list) -> bool:
 
 
 def _response_metadata(base_metadata: dict[str, Any], *, pending_clarification: bool = False) -> dict[str, Any]:
+    """构造出站消息的 metadata：先剪枝，再按需打上澄清标记。"""
     metadata = _slim_metadata(base_metadata)
     if pending_clarification:
         metadata[PENDING_CLARIFICATION_METADATA_KEY] = True
@@ -259,7 +269,7 @@ def _response_metadata(base_metadata: dict[str, Any], *, pending_clarification: 
 
 
 def _extract_text_content(content: Any) -> str:
-    """Extract text from a streaming payload content field."""
+    """从流式负载的 ``content`` 字段中抽取纯文本。"""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -285,7 +295,7 @@ def _extract_text_content(content: Any) -> str:
 
 
 def _merge_stream_text(existing: str, chunk: str) -> str:
-    """Merge either delta text or cumulative text into a single snapshot."""
+    """将增量文本或累积文本合并成单一最新快照。"""
     if not chunk:
         return existing
     if not existing or chunk == existing:
@@ -298,7 +308,7 @@ def _merge_stream_text(existing: str, chunk: str) -> str:
 
 
 def _extract_stream_message_id(payload: Any, metadata: Any) -> str | None:
-    """Best-effort extraction of the streamed AI message identifier."""
+    """尽力从流式事件中提取 AI 消息 ID。"""
     candidates = [payload, metadata]
     if isinstance(payload, Mapping):
         candidates.append(payload.get("kwargs"))
@@ -318,7 +328,7 @@ def _accumulate_stream_text(
     current_message_id: str | None,
     event_data: Any,
 ) -> tuple[str | None, str | None]:
-    """Convert a ``messages-tuple`` event into the latest displayable AI text."""
+    """将 ``messages-tuple`` 事件转换为最新可显示的 AI 文本。"""
     payload = event_data
     metadata: Any = None
     if isinstance(event_data, (list, tuple)):
@@ -351,12 +361,11 @@ def _accumulate_stream_text(
 
 
 def _extract_artifacts(result: dict | list) -> list[str]:
-    """Extract artifact paths from the last AI response cycle only.
+    """仅从最近一轮 AI 响应周期中提取产物路径。
 
-    Instead of reading the full accumulated ``artifacts`` state (which contains
-    all artifacts ever produced in the thread), this inspects the messages after
-    the last human message and collects file paths from ``present_files`` tool
-    calls.  This ensures only newly-produced artifacts are returned.
+    与读取整个累积的 ``artifacts`` 状态（其中包含该主题下生成过的所有产物）不同，
+    这里只检查最后一条 human 消息之后的 ``present_files`` 工具调用，
+    保证仅返回本轮新产生的产物。
     """
     if isinstance(result, list):
         messages = result
@@ -369,12 +378,12 @@ def _extract_artifacts(result: dict | list) -> list[str]:
     for msg in reversed(messages):
         if not isinstance(msg, dict):
             continue
-        # Stop at the last human message — anything before it is a previous turn
+        # 遇到最后一条 human 消息即停止
         if msg.get("type") == "human":
             if _is_hidden_human_control_message(msg):
                 continue
             break
-        # Look for AI messages with present_files tool calls
+        # 查找带 present_files 工具调用的 AI 消息
         if msg.get("type") == "ai":
             for tc in msg.get("tool_calls", []):
                 if isinstance(tc, dict) and tc.get("name") == "present_files":
@@ -386,7 +395,7 @@ def _extract_artifacts(result: dict | list) -> list[str]:
 
 
 def _is_hidden_human_control_message(msg: Mapping[str, Any]) -> bool:
-    """Return whether a human message is an internal control message hidden from UI."""
+    """判断一条 human 消息是否是内部控制消息（不向 UI 暴露）。"""
     if msg.get("type") != "human":
         return False
 
@@ -398,7 +407,7 @@ def _is_hidden_human_control_message(msg: Mapping[str, Any]) -> bool:
 
 
 def _format_artifact_text(artifacts: list[str]) -> str:
-    """Format artifact paths into a human-readable text block listing filenames."""
+    """把产物路径格式化为列出文件名的可读文本块。"""
     import posixpath
 
     filenames = [posixpath.basename(p) for p in artifacts]
@@ -411,14 +420,12 @@ _OUTPUTS_VIRTUAL_PREFIX = "/mnt/user-data/outputs/"
 
 
 def _resolve_attachments(thread_id: str, artifacts: list[str]) -> list[ResolvedAttachment]:
-    """Resolve virtual artifact paths to host filesystem paths with metadata.
+    """将虚拟产物路径解析为主机文件系统路径并附带元数据。
 
-    Only paths under ``/mnt/user-data/outputs/`` are accepted; any other
-    virtual path is rejected with a warning to prevent exfiltrating uploads
-    or workspace files via IM channels.
+    仅接受以 ``/mnt/user-data/outputs/`` 开头的路径；任何其他虚拟路径
+    都会被拒绝并打印警告，防止通过 IM 渠道泄露 uploads 或 workspace 中的文件。
 
-    Skips artifacts that cannot be resolved (missing files, invalid paths)
-    and logs warnings for them.
+    无法解析的产物（文件缺失、路径非法）会被跳过并打印警告。
     """
     from deerflow.config.paths import get_paths
 
@@ -427,14 +434,14 @@ def _resolve_attachments(thread_id: str, artifacts: list[str]) -> list[ResolvedA
     user_id = get_effective_user_id()
     outputs_dir = paths.sandbox_outputs_dir(thread_id, user_id=user_id).resolve()
     for virtual_path in artifacts:
-        # Security: only allow files from the agent outputs directory
+        # 安全：仅允许来自智能体 outputs 目录的文件
         if not virtual_path.startswith(_OUTPUTS_VIRTUAL_PREFIX):
             logger.warning("[Manager] rejected non-outputs artifact path: %s", virtual_path)
             continue
         try:
             actual = paths.resolve_virtual_path(thread_id, virtual_path, user_id=user_id)
-            # Verify the resolved path is actually under the outputs directory
-            # (guards against path-traversal even after prefix check)
+            # 校验解析后的路径确实位于 outputs 目录下
+            # （即使通过前缀检查，仍防止路径穿越）
             try:
                 actual.resolve().relative_to(outputs_dir)
             except ValueError:
@@ -465,7 +472,7 @@ def _prepare_artifact_delivery(
     response_text: str,
     artifacts: list[str],
 ) -> tuple[str, list[ResolvedAttachment]]:
-    """Resolve attachments and append filename fallbacks to the text response."""
+    """解析附件并把文件名追加到响应文本中作为回退。"""
     attachments: list[ResolvedAttachment] = []
     if not artifacts:
         return response_text, attachments
@@ -478,8 +485,8 @@ def _prepare_artifact_delivery(
         artifact_text = _format_artifact_text(unresolved)
         response_text = (response_text + "\n\n" + artifact_text) if response_text else artifact_text
 
-    # Always include resolved attachment filenames as a text fallback so files
-    # remain discoverable even when the upload is skipped or fails.
+    # 始终把已解析的附件文件名追加到文本中作为回退，
+    # 即便上传被跳过或失败，用户仍能从文本中发现文件。
     if attachments:
         resolved_text = _format_artifact_text([attachment.virtual_path for attachment in attachments])
         response_text = (response_text + "\n\n" + resolved_text) if response_text else resolved_text
@@ -488,6 +495,11 @@ def _prepare_artifact_delivery(
 
 
 async def _ingest_inbound_files(thread_id: str, msg: InboundMessage) -> list[dict[str, Any]]:
+    """把入站消息中的文件附件下载并写入 DeerFlow 沙盒的 uploads 目录。
+
+    Returns:
+        list[dict[str, Any]]: 每条结果包含 ``filename``、``size``、``path``、``is_image`` 字段。
+    """
     if not msg.files:
         return []
 
@@ -569,6 +581,7 @@ async def _ingest_inbound_files(thread_id: str, msg: InboundMessage) -> list[dic
 
 
 def _format_uploaded_files_block(files: list[dict[str, Any]]) -> str:
+    """将上传文件列表格式化为 ``<uploaded_files>...</uploaded_files>`` 文本块。"""
     lines = [
         "<uploaded_files>",
         "The following files were uploaded in this message:",
@@ -596,11 +609,10 @@ def _format_uploaded_files_block(files: list[dict[str, Any]]) -> str:
 
 
 class ChannelManager:
-    """Core dispatcher that bridges IM channels to the DeerFlow agent.
+    """桥接 IM 渠道与 DeerFlow 智能体的核心调度器。
 
-    It reads from the MessageBus inbound queue, creates/reuses threads on
-    Gateway's LangGraph-compatible API, sends messages via ``runs.wait``, and publishes
-    outbound responses back through the bus.
+    它从 ``MessageBus`` 的入站队列读取消息，在 Gateway 的 LangGraph 兼容 API 上
+    创建/复用主题，通过 ``runs.wait`` 发送消息，并把出站响应发布回总线。
     """
 
     def __init__(
@@ -615,6 +627,18 @@ class ChannelManager:
         default_session: dict[str, Any] | None = None,
         channel_sessions: dict[str, Any] | None = None,
     ) -> None:
+        """初始化调度器。
+
+        Args:
+            bus: 用于收发出站消息的 ``MessageBus`` 实例。
+            store: ``ChannelStore`` 持久化 IM 会话到主题的映射。
+            max_concurrency: 同时处理消息的最大协程数。
+            langgraph_url: LangGraph 兼容 Gateway API 的 base URL。
+            gateway_url: Gateway 的辅助接口 URL。
+            assistant_id: 默认的助理 ID。
+            default_session: 可选的默认会话覆盖（config / context）。
+            channel_sessions: 按渠道甚至按用户的会话覆盖。
+        """
         self.bus = bus
         self.store = store
         self._max_concurrency = max_concurrency
@@ -623,7 +647,7 @@ class ChannelManager:
         self._assistant_id = assistant_id
         self._default_session = _as_dict(default_session)
         self._channel_sessions = dict(channel_sessions or {})
-        self._client = None  # lazy init — langgraph_sdk async client
+        self._client = None  # 懒加载 — langgraph_sdk 异步客户端
         self._csrf_token = generate_csrf_token()
         self._semaphore: asyncio.Semaphore | None = None
         self._running = False
@@ -631,6 +655,7 @@ class ChannelManager:
 
     @staticmethod
     def _channel_supports_streaming(channel_name: str) -> bool:
+        """判断指定渠道是否支持增量（流式）出站更新。"""
         from .service import get_channel_service
 
         service = get_channel_service()
@@ -641,12 +666,14 @@ class ChannelManager:
         return CHANNEL_CAPABILITIES.get(channel_name, {}).get("supports_streaming", False)
 
     def _resolve_session_layer(self, msg: InboundMessage) -> tuple[dict[str, Any], dict[str, Any]]:
+        """根据消息的渠道和用户，从会话覆盖中取出该消息适用的渠道层和用户层。"""
         channel_layer = _as_dict(self._channel_sessions.get(msg.channel_name))
         users_layer = _as_dict(channel_layer.get("users"))
         user_layer = _as_dict(users_layer.get(msg.user_id))
         return channel_layer, user_layer
 
     def _resolve_run_params(self, msg: InboundMessage, thread_id: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        """根据渠道/用户/默认层叠合并出 ``assistant_id``、``run_config``、``run_context``。"""
         channel_layer, user_layer = self._resolve_session_layer(msg)
 
         assistant_id = user_layer.get("assistant_id") or channel_layer.get("assistant_id") or self._default_session.get("assistant_id") or self._assistant_id
@@ -666,14 +693,12 @@ class ChannelManager:
         else:
             configurable = {}
         run_config["configurable"] = configurable
-        # Pin channel-triggered runs to the root graph namespace so follow-up
-        # turns continue from the same conversation checkpoint.
+        # 将渠道触发的运行固定到根图命名空间，使后续轮次共享同一检查点。
         configurable["checkpoint_ns"] = ""
         configurable["thread_id"] = thread_id
 
-        # ``user_id`` drives user-scoped filesystem buckets that only accept
-        # ``[A-Za-z0-9_-]``, so normalize the channel id and keep the raw value
-        # under ``channel_user_id`` for platform-facing lookups.
+        # ``user_id`` 决定用户级文件系统桶的路径，仅接受 ``[A-Za-z0-9_-]``，
+        # 因此对渠道 ID 做安全归一化，并把原始值保留在 ``channel_user_id`` 供平台层查找。
         run_context_identity: dict[str, Any] = {"thread_id": thread_id}
         if msg.user_id:
             run_context_identity["user_id"] = make_safe_user_id(msg.user_id)
@@ -687,19 +712,18 @@ class ChannelManager:
             run_context_identity,
         )
 
-        # Custom agents are implemented as lead_agent + agent_name context.
-        # Keep backward compatibility for channel configs that set
-        # assistant_id: <custom-agent-name> by routing through lead_agent.
+        # 自定义智能体通过 lead_agent + agent_name 上下文实现。
+        # 兼容渠道配置中 ``assistant_id: <custom-agent-name>`` 的旧写法：归一到 lead_agent。
         if assistant_id != DEFAULT_ASSISTANT_ID:
             run_context.setdefault("agent_name", _normalize_custom_agent_name(assistant_id))
             assistant_id = DEFAULT_ASSISTANT_ID
 
         return assistant_id, run_config, run_context
 
-    # -- LangGraph SDK client (lazy) ----------------------------------------
+    # -- LangGraph SDK 客户端（懒加载） ----------------------------------------
 
     def _get_client(self):
-        """Return the ``langgraph_sdk`` async client, creating it on first use."""
+        """返回 ``langgraph_sdk`` 异步客户端，首次使用时创建。"""
         if self._client is None:
             from langgraph_sdk import get_client
 
@@ -713,10 +737,10 @@ class ChannelManager:
             )
         return self._client
 
-    # -- lifecycle ---------------------------------------------------------
+    # -- 生命周期 ---------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the dispatch loop."""
+        """启动调度循环。"""
         if self._running:
             return
         self._running = True
@@ -725,7 +749,7 @@ class ChannelManager:
         logger.info("ChannelManager started (max_concurrency=%d)", self._max_concurrency)
 
     async def stop(self) -> None:
-        """Stop the dispatch loop."""
+        """停止调度循环。"""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -736,9 +760,10 @@ class ChannelManager:
             self._task = None
         logger.info("ChannelManager stopped")
 
-    # -- dispatch loop -----------------------------------------------------
+    # -- 调度循环 --------------------------------------------------------
 
     async def _dispatch_loop(self) -> None:
+        """主调度循环：消费入站消息并为每条派发一个处理任务。"""
         logger.info("[Manager] dispatch loop started, waiting for inbound messages")
         while self._running:
             try:
@@ -760,7 +785,7 @@ class ChannelManager:
 
     @staticmethod
     def _log_task_error(task: asyncio.Task) -> None:
-        """Surface unhandled exceptions from background tasks."""
+        """把后台任务未处理的异常打印到日志。"""
         if task.cancelled():
             return
         exc = task.exception()
@@ -768,6 +793,7 @@ class ChannelManager:
             logger.error("[Manager] unhandled error in message task: %s", exc, exc_info=exc)
 
     async def _handle_message(self, msg: InboundMessage) -> None:
+        """按消息类型派发到命令处理或聊天处理。"""
         async with self._semaphore:
             try:
                 if msg.msg_type == InboundMessageType.COMMAND:
@@ -790,10 +816,10 @@ class ChannelManager:
                 )
                 await self._send_error(msg, "An internal error occurred. Please try again.")
 
-    # -- chat handling -----------------------------------------------------
+    # -- 聊天处理 -------------------------------------------------------
 
     async def _create_thread(self, client, msg: InboundMessage) -> str:
-        """Create a new thread through Gateway and store the mapping."""
+        """通过 Gateway 创建一个新主题并保存映射。"""
         thread = await client.threads.create()
         thread_id = thread["thread_id"]
         self.store.set_thread_id(
@@ -807,25 +833,23 @@ class ChannelManager:
         return thread_id
 
     async def _handle_chat(self, msg: InboundMessage, extra_context: dict[str, Any] | None = None) -> None:
+        """处理普通聊天消息：解析主题、调用模型、发布出站响应。"""
         client = self._get_client()
 
-        # Look up existing DeerFlow thread.
-        # topic_id may be None (e.g. Telegram private chats) — the store
-        # handles this by using the "channel:chat_id" key without a topic suffix.
+        # 查找已存在的 DeerFlow 主题。
+        # topic_id 可能为 None（例如 Telegram 私聊）——store 会用 "channel:chat_id" 作为键。
         thread_id = self.store.get_thread_id(msg.channel_name, msg.chat_id, topic_id=msg.topic_id)
         if thread_id:
             logger.info("[Manager] reusing thread: thread_id=%s for topic_id=%s", thread_id, msg.topic_id)
 
-        # No existing thread found — create a new one
+        # 没有已存在主题则创建新的
         if thread_id is None:
             thread_id = await self._create_thread(client, msg)
 
         assistant_id, run_config, run_context = self._resolve_run_params(msg, thread_id)
 
-        # If the inbound message contains file attachments, let the channel
-        # materialize (download) them and update msg.text to include sandbox file paths.
-        # This enables downstream models to access user-uploaded files by path.
-        # Channels that do not support file download will simply return the original message.
+        # 如果入站消息含有文件附件，让渠道把文件落盘到沙盒并改写 msg.text，
+        # 加上沙盒文件路径，以便下游模型按路径访问。不支持下载的渠道直接返回原消息。
         if msg.files:
             from .service import get_channel_service
 
@@ -910,6 +934,7 @@ class ChannelManager:
         run_config: dict[str, Any],
         run_context: dict[str, Any],
     ) -> None:
+        """通过 ``runs.stream`` 调用模型，按流节流发布中间更新，并在结束时发布最终结果。"""
         logger.info("[Manager] invoking runs.stream(thread_id=%s, text=%r)", thread_id, msg.text[:100])
 
         last_values: dict[str, Any] | list | None = None
@@ -1008,9 +1033,10 @@ class ChannelManager:
                 )
             )
 
-    # -- command handling --------------------------------------------------
+    # -- 命令处理 --------------------------------------------------------
 
     async def _handle_command(self, msg: InboundMessage) -> None:
+        """处理以 ``/`` 开头的渠道命令。"""
         text = msg.text.strip()
         parts = text.split(maxsplit=1)
         command = parts[0].lower().lstrip("/")
@@ -1024,7 +1050,7 @@ class ChannelManager:
             return
 
         if command == "new":
-            # Create a new thread through Gateway
+            # 通过 Gateway 创建新主题
             client = self._get_client()
             thread = await client.threads.create()
             new_thread_id = thread["thread_id"]
@@ -1068,7 +1094,7 @@ class ChannelManager:
         await self.bus.publish_outbound(outbound)
 
     async def _fetch_gateway(self, path: str, kind: str) -> str:
-        """Fetch data from the Gateway API for command responses."""
+        """调用 Gateway API 获取数据以回复命令。"""
         import httpx
 
         try:
@@ -1092,9 +1118,10 @@ class ChannelManager:
             return f"Memory contains {len(facts)} fact(s)."
         return str(data)
 
-    # -- error helper ------------------------------------------------------
+    # -- 错误辅助 -------------------------------------------------------
 
     async def _send_error(self, msg: InboundMessage, error_text: str) -> None:
+        """将错误消息作为出站消息发布。"""
         outbound = OutboundMessage(
             channel_name=msg.channel_name,
             chat_id=msg.chat_id,

@@ -1,10 +1,10 @@
-"""Middleware that enforces a per-result budget on tool outputs.
+"""对单次工具结果强制大小预算的中间件。
 
-Oversized tool results are persisted to disk and replaced with a compact
-preview containing a file reference.  When disk persistence is
-unavailable the middleware falls back to head+tail truncation so the
-model context is never blown by a single large tool return.
+    超大的工具结果会被持久化到磁盘，并替换为包含文件引用的精简预览。
+    当磁盘持久化不可用时，中间件会回退到 head+tail 截断，
+    避免单条巨大结果撑爆模型上下文。
 """
+
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _default_config() -> ToolOutputConfig:
+    """返回值。"""
     return ToolOutputConfig()
 
 
@@ -38,10 +39,10 @@ def _default_config() -> ToolOutputConfig:
 
 
 def _message_text(content: Any) -> str | None:
-    """Extract a plain-text representation from a ToolMessage content field.
+    """从 ``ToolMessage.content`` 中提取纯文本表示。
 
-    Returns ``None`` for non-string / multimodal content so the caller
-    can skip budget enforcement (images, structured blocks, etc.).
+    对于非字符串/多模态内容（如图片、结构化块）返回 ``None``，
+    调用方据此跳过预算限制。
     """
     if isinstance(content, str):
         return content
@@ -61,11 +62,10 @@ def _message_text(content: Any) -> str | None:
 
 
 def _snap_to_line_boundary(text: str, pos: int) -> int:
-    """Return *pos* or the nearest preceding newline+1, whichever is closer.
+    """返回 *pos* 或距离 *pos* 最近的前一个换行 +1，取更接近的。
 
-    Used so that previews and truncations end on a complete line when
-    possible.  If no newline exists in the second half of ``text[:pos]``
-    the original *pos* is returned unchanged.
+    让预览与截断在可能的情况下以完整行结束。若 ``text[:pos]`` 的后半段
+    找不到换行符，则原样返回 *pos*。
     """
     if pos <= 0 or pos >= len(text):
         return pos
@@ -88,7 +88,7 @@ _EXT_MAP: dict[str, str] = {
 
 
 def _sanitize_tool_name(name: str) -> str:
-    """Strip path separators and traversal components from a tool name."""
+    """去除工具名中的路径分隔符与穿越组件。"""
     base = os.path.basename(name)
     safe = base.replace("..", "").replace("/", "_").replace("\\", "_")
     return safe or "unknown"
@@ -102,7 +102,7 @@ def _externalize(
     outputs_path: str,
     storage_subdir: str,
 ) -> str | None:
-    """Write *content* to disk and return the virtual path, or ``None`` on failure."""
+    """将 *content* 写入磁盘并返回虚拟路径，写入失败则返回 ``None``。"""
     if os.path.isabs(storage_subdir) or ".." in storage_subdir:
         return None
     storage_dir = os.path.join(outputs_path, storage_subdir)
@@ -143,7 +143,7 @@ def _build_preview(
     head_chars: int,
     tail_chars: int,
 ) -> str:
-    """Build a preview with a file reference for externalized output."""
+    """为外部化输出构造带有文件引用的预览片段。"""
     total = len(content)
     head_end = _snap_to_line_boundary(content, min(head_chars, total))
     tail_start = max(head_end, total - tail_chars)
@@ -171,9 +171,9 @@ def _build_fallback(
     head_chars: int,
     tail_chars: int,
 ) -> str:
-    """Build a head+tail truncation when disk persistence is unavailable.
+    """在磁盘持久化不可用时构造 head+tail 截断。
 
-    The returned string is guaranteed to be no longer than *max_chars*.
+    返回的字符串长度保证不超过 *max_chars*。
     """
     total = len(content)
     if max_chars <= 0 or total <= max_chars:
@@ -213,7 +213,7 @@ def _build_fallback(
 
 
 def _resolve_outputs_path(request: ToolCallRequest) -> str | None:
-    """Best-effort extraction of the thread outputs path."""
+    """尽力解析当前线程的 outputs 目录路径。"""
     runtime = getattr(request, "runtime", None)
     if runtime is None:
         return None
@@ -235,7 +235,7 @@ def _budget_content(
     outputs_path: str | None,
     config: ToolOutputConfig,
 ) -> str | None:
-    """Apply budget to *content*. Returns ``None`` if no change needed."""
+    """对 *content* 施加预算。无变化时返回 ``None``。"""
     threshold = config.tool_overrides.get(tool_name, config.externalize_min_chars)
     if threshold <= 0 and config.fallback_max_chars <= 0:
         return None
@@ -289,7 +289,7 @@ def _budget_content(
 
 
 def _patch_tool_message(msg: ToolMessage, config: ToolOutputConfig, outputs_path: str | None) -> ToolMessage:
-    """Apply budget to a single ToolMessage. Returns the original if unchanged."""
+    """对单个 ToolMessage 施加预算；未变化时返回原对象。"""
     tool_name = msg.name or "unknown"
     if tool_name in config.exempt_tools:
         return msg
@@ -317,11 +317,11 @@ def _patch_tool_message(msg: ToolMessage, config: ToolOutputConfig, outputs_path
 
 
 def _effective_trigger(tool_name: str, config: ToolOutputConfig) -> int:
-    """Smallest content length that could trigger budgeting for *tool_name*.
+    """返回可能触发 *tool_name* 预算的最小内容长度。
 
-    Mirrors the trigger conditions in :func:`_budget_content` (per-tool
-    externalize threshold OR global fallback), so the pre-scan never produces
-    a false negative. Returns ``-1`` when nothing could ever trigger.
+    与 :func:`_budget_content` 中的触发条件（每工具外部化阈值或全局
+    回退）保持一致，确保预扫描不会出现漏报；当无论如何都不会触发时
+    返回 ``-1``。
     """
     candidates: list[int] = []
     externalize = config.tool_overrides.get(tool_name, config.externalize_min_chars)
@@ -333,7 +333,7 @@ def _effective_trigger(tool_name: str, config: ToolOutputConfig) -> int:
 
 
 def _tool_message_over_budget(msg: ToolMessage, config: ToolOutputConfig) -> bool:
-    """Cheap, per-tool-aware check: is this ToolMessage non-exempt and over its trigger?"""
+    """廉价、按工具感知的检查：该 ToolMessage 是否非豁免且超出其触发阈值？"""
     if (msg.name or "") in config.exempt_tools:
         return False
     trigger = _effective_trigger(msg.name or "", config)
@@ -344,7 +344,7 @@ def _tool_message_over_budget(msg: ToolMessage, config: ToolOutputConfig) -> boo
 
 
 def _needs_budget(result: ToolMessage | Command, config: ToolOutputConfig) -> bool:
-    """Fast check whether *result* could need budgeting (avoids thread offload for small outputs)."""
+    """快速判断 *result* 是否可能需要预算（避免对小型输出做线程卸载）。"""
     if isinstance(result, ToolMessage):
         return _tool_message_over_budget(result, config)
     update = getattr(result, "update", None)
@@ -356,7 +356,7 @@ def _needs_budget(result: ToolMessage | Command, config: ToolOutputConfig) -> bo
 
 
 def _patch_result(result: ToolMessage | Command, config: ToolOutputConfig, outputs_path: str | None) -> ToolMessage | Command:
-    """Apply budget to a tool call result (ToolMessage or Command)."""
+    """对工具调用结果（``ToolMessage`` 或 ``Command``）施加预算。"""
     if isinstance(result, ToolMessage):
         return _patch_tool_message(result, config, outputs_path)
 
@@ -386,12 +386,11 @@ def _patch_result(result: ToolMessage | Command, config: ToolOutputConfig, outpu
 
 
 def _patch_model_messages(messages: list[Any], config: ToolOutputConfig) -> list[Any] | None:
-    """Apply budget to historical ToolMessages in a model request. Returns ``None`` if unchanged.
+    """对模型请求中的历史 ``ToolMessage`` 施加预算，未变化则返回 ``None``。
 
-    A cheap pre-scan bails out before allocating a new list when no historical
-    ToolMessage exceeds the budget — the common case once every result has
-    already been budgeted at tool-call time, so a long history is not rebuilt
-    on every model call.
+    廉价的预扫描在所有历史 ``ToolMessage`` 都不超额时直接退出，避免分配
+    新列表——这是工具调用阶段已完成预算后最常见的情况，因此不会在每次
+    模型调用时重建长历史。
     """
     if not any(isinstance(msg, ToolMessage) and _tool_message_over_budget(msg, config) for msg in messages):
         return None
@@ -415,14 +414,24 @@ def _patch_model_messages(messages: list[Any], config: ToolOutputConfig) -> list
 
 
 class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
-    """Enforce per-result budget on tool outputs via externalization or truncation."""
+    """通过外部化或截断对工具输出施加单次结果的预算限制。"""
 
     def __init__(self, config: ToolOutputConfig | None = None) -> None:
+        """初始化 self。"""
         super().__init__()
         self._config = config if config is not None else _default_config()
 
     @classmethod
     def from_app_config(cls, app_config: Any) -> ToolOutputBudgetMiddleware:
+        """执行赋值。
+        
+                Args:
+                    cls: 参数说明。
+                    app_config: Any: 参数说明。
+        
+                Returns:
+                    ToolOutputBudgetMiddleware。
+        """
         tool_output = getattr(app_config, "tool_output", None)
         if isinstance(tool_output, ToolOutputConfig):
             return cls(config=tool_output)
@@ -436,6 +445,7 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
+        """同步入口：拦截工具调用，按需修改 ``request`` 后调用 ``handler``。"""
         result = handler(request)
         if not self._config.enabled:
             return result
@@ -450,6 +460,7 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
+        """异步入口：拦截工具调用，按需修改 ``request`` 后 ``await handler``。"""
         result = await handler(request)
         if not self._config.enabled:
             return result
@@ -466,6 +477,7 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
+        """同步入口：拦截模型调用，必要时修改 ``request`` 后调用 ``handler``。"""
         if self._config.enabled:
             messages = getattr(request, "messages", None)
             if isinstance(messages, list):
@@ -480,6 +492,7 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
+        """异步入口：拦截模型调用，必要时修改 ``request`` 后 ``await handler``。"""
         if self._config.enabled:
             messages = getattr(request, "messages", None)
             if isinstance(messages, list):

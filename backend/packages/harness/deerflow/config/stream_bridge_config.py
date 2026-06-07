@@ -1,4 +1,4 @@
-"""Configuration for stream bridge."""
+"""Stream bridge 的配置。"""
 
 from typing import Literal
 
@@ -8,40 +8,51 @@ StreamBridgeType = Literal["memory", "redis"]
 
 
 class StreamBridgeConfig(BaseModel):
-    """Configuration for the stream bridge that connects agent workers to SSE endpoints."""
+    """连接 agent worker 与 SSE 端点的 stream bridge 配置。"""
 
     type: StreamBridgeType = Field(
         default="memory",
-        description="Stream bridge backend type. 'memory' uses in-process asyncio.Queue (single-process only). 'redis' uses Redis Streams (planned for Phase 2, not yet implemented).",
+        description="stream bridge 后端类型。'memory' 使用进程内的 asyncio.Queue（仅限单进程）；'redis' 使用 Redis Streams（计划在 Phase 2 提供，尚未实现）。",
     )
     redis_url: str | None = Field(
         default=None,
-        description="Redis URL for the redis stream bridge type. Example: 'redis://localhost:6379/0'.",
+        description="redis 后端的 Redis URL，例如 'redis://localhost:6379/0'。",
     )
     queue_maxsize: int = Field(
         default=256,
-        description="Maximum number of events buffered per run in the memory bridge.",
+        description="memory bridge 下每个 run 最多缓冲的事件数。",
     )
 
 
-# Global configuration instance — None means no stream bridge is configured
-# (falls back to memory with defaults).
+# 全局配置实例 —— None 表示尚未配置 stream bridge（回退到默认 memory 行为）。
 _stream_bridge_config: StreamBridgeConfig | None = None
 
 
 def get_stream_bridge_config() -> StreamBridgeConfig | None:
-    """Get the current stream bridge configuration, or None if not configured."""
+    """获取当前 stream bridge 配置；未配置时返回 ``None``。
+
+    Returns:
+        StreamBridgeConfig | None: 当前配置对象，未配置时为 ``None``。
+    """
     return _stream_bridge_config
 
 
 def set_stream_bridge_config(config: StreamBridgeConfig | None) -> None:
-    """Set the stream bridge configuration."""
+    """设置 stream bridge 配置。
+
+    Args:
+        config: 新的配置对象；传 ``None`` 表示清除配置。
+    """
     global _stream_bridge_config
     _stream_bridge_config = config
 
 
 def load_stream_bridge_config_from_dict(config_dict: dict | None) -> None:
-    """Load stream bridge configuration from a dictionary."""
+    """从字典加载 stream bridge 配置。
+
+    Args:
+        config_dict: 符合 :class:`StreamBridgeConfig` 字段的字典；``None`` 表示清除配置。
+    """
     global _stream_bridge_config
     if config_dict is None:
         _stream_bridge_config = None

@@ -1,15 +1,13 @@
-"""update_agent tool — let a custom agent persist updates to its own SOUL.md / config.
+"""update_agent 工具:让自定义 Agent 把对自身 SOUL.md / config.yaml 的更新持久化。
 
-Bound to the lead agent only when ``runtime.context['agent_name']`` is set
-(i.e. inside an existing custom agent's chat). The default agent does not see
-this tool, and the bootstrap flow continues to use ``setup_agent`` for the
-initial creation handshake.
+仅在 ``runtime.context['agent_name']`` 存在(即已进入某个自定义 Agent 的对话
+上下文)时才会绑定到 lead agent。默认 Agent 看不到该工具,而启动引导流程仍然
+使用 :func:`setup_agent` 完成初次创建握手。
 
-The tool writes back to ``{base_dir}/users/{user_id}/agents/{agent_name}/{config.yaml,SOUL.md}``
-so an agent created by one user is never visible to (or mutable by) another.
-Writes are staged into temp files first; both files are renamed into place only
-after both temp files are successfully written, so a partial failure cannot leave
-config.yaml updated while SOUL.md still holds stale content.
+该工具写入 ``{base_dir}/users/{user_id}/agents/{agent_name}/{config.yaml,SOUL.md}``,
+保证一个用户创建的 Agent 不会被其他用户看到或修改。文件先写入临时文件,
+两个临时文件都成功落盘后再原子地 rename 到正式位置——避免部分失败导致
+config.yaml 已被替换而 SOUL.md 还是旧内容。
 """
 
 from __future__ import annotations
@@ -37,10 +35,17 @@ _NULLISH_STRINGS = frozenset({"null", "none", "undefined"})
 
 
 def _stage_temp(path: Path, text: str) -> Path:
-    """Write ``text`` into a sibling temp file and return its path.
+    """把 ``text`` 写入同目录的临时文件并返回其路径。
 
-    The caller is responsible for ``Path.replace``-ing the temp into the target
-    once every staged file is ready, or for unlinking it on failure.
+    调用方负责在所有暂存文件就绪后通过 :meth:`Path.replace` 替换到目标,
+    或在失败时自行 unlink。
+
+    Args:
+        path: 目标文件路径(临时文件位于其同目录)。
+        text: 待写入的文本内容。
+
+    Returns:
+        创建的临时文件路径。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = tempfile.NamedTemporaryFile(
@@ -62,7 +67,7 @@ def _stage_temp(path: Path, text: str) -> Path:
 
 
 def _cleanup_temps(temps: list[Path]) -> None:
-    """Best-effort removal of staged temp files."""
+    """尽力清理已暂存的临时文件。"""
     for tmp in temps:
         try:
             tmp.unlink(missing_ok=True)
@@ -71,10 +76,12 @@ def _cleanup_temps(temps: list[Path]) -> None:
 
 
 def _is_nullish_string(value: object) -> bool:
+    """判断值是否为表示"无"的字面字符串(``null``/``none``/``undefined``)。"""
     return isinstance(value, str) and value.strip().lower() in _NULLISH_STRINGS
 
 
 def _normalize_nullish_string(value: object) -> object:
+    """把"无"的字面字符串规范化为 ``None``(供 Pydantic 验证器使用)。"""
     return None if _is_nullish_string(value) else value
 
 
@@ -91,36 +98,33 @@ def update_agent(
     tool_groups: OptionalStringList = None,
     model: OptionalText = None,
 ) -> Command:
-    """Persist updates to the current custom agent's SOUL.md and config.yaml.
+    """把对当前自定义 Agent 的 SOUL.md / config.yaml 修改持久化。
 
-    Use this when the user asks to refine the agent's identity, description,
-    skill whitelist, tool-group whitelist, or default model. Only the fields
-    you explicitly pass are updated; omitted fields keep their existing values.
+    当用户要求调整 Agent 的身份、描述、技能白名单、工具组白名单或默认模型时
+    使用本工具。仅显式传入的字段会被更新;省略的字段保持原值。
 
-    Pass ``soul`` as the FULL replacement SOUL.md content — there is no patch
-    semantics, so always start from the current SOUL and apply your edits.
+    ``soul`` 是完整替换内容——没有 patch 语义,因此请始终基于当前 SOUL 进行编辑。
 
-    Pass ``skills=[]`` to disable all skills for this agent. Omit ``skills``
-    entirely to keep the existing whitelist. Do not pass literal strings like
-    ``"null"`` / ``"none"`` / ``"undefined"`` for unchanged fields; omit those
-    fields instead.
+    传入 ``skills=[]`` 关闭该 Agent 的所有技能;省略 ``skills`` 则保持当前白名单
+    不变。对于未变更字段不要传 ``"null"``/``"none"``/``"undefined"`` 之类的字面量,
+    直接省略即可。
 
     Args:
-        soul: Optional full replacement SOUL.md content.
-        description: Optional new one-line description.
-        skills: Optional skill whitelist. ``[]`` = no skills, omit = unchanged.
-        tool_groups: Optional tool-group whitelist. ``[]`` = empty, omit = unchanged.
-        model: Optional model override (must match a configured model name).
+        soul: 可选的完整 SOUL.md 替换内容。
+        description: 可选的一行新描述。
+        skills: 可选技能白名单。``[]`` = 无技能,省略 = 不变。
+        tool_groups: 可选工具组白名单。``[]`` = 空,省略 = 不变。
+        model: 可选模型覆盖(必须匹配已配置的模型名)。
 
     Returns:
-        Command with a ToolMessage describing the result. Changes take effect
-        on the next user turn (when the lead agent is rebuilt with the fresh
-        SOUL.md and config.yaml).
+        带 :class:`ToolMessage` 的 :class:`Command` 描述结果。变更将在下一次
+        用户轮转时生效(那时 lead agent 会用新的 SOUL.md 与 config.yaml 重建)。
     """
     tool_call_id = runtime.tool_call_id
     agent_name_raw: str | None = runtime.context.get("agent_name") if runtime.context else None
 
     def _err(message: str) -> Command:
+        """返回值。"""
         return Command(update={"messages": [ToolMessage(content=f"Error: {message}", tool_call_id=tool_call_id, status="error")]})
 
     if soul is None and description is None and skills is None and tool_groups is None and model is None:

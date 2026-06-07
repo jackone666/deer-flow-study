@@ -1,13 +1,11 @@
-"""Pure-argument factory for DeerFlow agents.
+"""DeerFlow Agent 的纯参数工厂。
 
-``create_deerflow_agent`` accepts plain Python arguments — no YAML files, no
-global singletons.  It is the SDK-level entry point sitting between the raw
-``langchain.agents.create_agent`` primitive and the config-driven
-``make_lead_agent`` application factory.
+``create_deerflow_agent`` 接受纯 Python 参数——不依赖 YAML 文件，也不使用全局单例。
+它位于原始的 ``langchain.agents.create_agent`` 原子接口与配置驱动的
+``make_lead_agent`` 应用工厂之间，是 SDK 层的入口点。
 
-Note: the factory assembly itself is config-free, but some injected runtime
-components (e.g. ``task_tool`` for subagent) may still read global config at
-invocation time.  Full config-free runtime is a Phase 2 goal.
+注意：工厂组装本身不读取配置，但部分注入的运行时组件（例如子代理的 ``task_tool``）
+在调用时仍可能读取全局配置。完全配置无关的运行时是第二阶段的目标。
 """
 
 from __future__ import annotations
@@ -71,41 +69,30 @@ def create_deerflow_agent(
     checkpointer: BaseCheckpointSaver | None = None,
     name: str = "default",
 ) -> CompiledStateGraph:
-    """Create a DeerFlow agent from plain Python arguments.
+    """从纯 Python 参数创建 DeerFlow Agent。
 
-    The factory assembly itself reads no config files.  Some injected runtime
-    components (e.g. ``task_tool``) may still depend on global config at
-    invocation time — see Phase 2 roadmap for full config-free runtime.
+    工厂组装过程本身不读取任何配置文件。部分注入的运行时组件（例如 ``task_tool``）
+    在调用时仍可能依赖全局配置——完全配置无关的运行时请参见第二阶段路线图。
 
-    Parameters
-    ----------
-    model:
-        Chat model instance.
-    tools:
-        User-provided tools.  Feature-injected tools are appended automatically.
-    system_prompt:
-        System message.  ``None`` uses a minimal default.
-    middleware:
-        **Full takeover** — if provided, this exact list is used.
-        Cannot be combined with *features* or *extra_middleware*.
-    features:
-        Declarative feature flags.  Cannot be combined with *middleware*.
-    extra_middleware:
-        Additional middlewares inserted into the auto-assembled chain via
-        ``@Next``/``@Prev`` positioning.  Cannot be used with *middleware*.
-    plan_mode:
-        Enable TodoMiddleware for task tracking.
-    state_schema:
-        LangGraph state type.  Defaults to ``ThreadState``.
-    checkpointer:
-        Optional persistence backend.
-    name:
-        Agent name (passed to middleware that cares, e.g. ``MemoryMiddleware``).
+    Args:
+        model: 聊天模型实例。
+        tools: 用户提供的工具列表。由特性自动注入的工具会追加在末尾。
+        system_prompt: 系统提示词。为 ``None`` 时使用最小化默认值。
+        middleware: **完全接管**——若提供，则使用该精确列表，不能与
+            *features* 或 *extra_middleware* 同时使用。
+        features: 声明式特性开关集合，不能与 *middleware* 同时使用。
+        extra_middleware: 通过 ``@Next``/``@Prev`` 锚点插入到自动组装链中的
+            额外中间件，不能与 *middleware* 同时使用。
+        plan_mode: 是否启用 TodoMiddleware 进行任务跟踪。
+        state_schema: LangGraph 状态类型，默认为 ``ThreadState``。
+        checkpointer: 可选的持久化后端。
+        name: Agent 名称（传递给关心该字段的中间件，如 ``MemoryMiddleware``）。
 
-    Raises
-    ------
-    ValueError
-        If both *middleware* and *features*/*extra_middleware* are provided.
+    Returns:
+        编译后的 LangGraph ``CompiledStateGraph``。
+
+    Raises:
+        ValueError: 当 *middleware* 与 *features*/*extra_middleware* 同时提供时。
     """
     if middleware is not None and features is not None:
         raise ValueError("Cannot specify both 'middleware' and 'features'.  Use one or the other.")
@@ -159,32 +146,32 @@ def _assemble_from_features(
     plan_mode: bool = False,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> tuple[list[AgentMiddleware], list[BaseTool]]:
-    """Build an ordered middleware chain + extra tools from *feat*.
+    """根据 *feat* 构建有序的中间件链及额外工具。
 
-    Middleware order matches ``make_lead_agent`` (14 middlewares):
+    中间件顺序与 ``make_lead_agent``（14 个中间件）保持一致：
 
-      0-2. Sandbox infrastructure (ThreadData → Uploads → Sandbox)
-      3.   DanglingToolCallMiddleware (always)
-      4.   GuardrailMiddleware (guardrail feature)
-      5.   ToolErrorHandlingMiddleware (always)
-      6.   SummarizationMiddleware (summarization feature)
-      7.   TodoMiddleware (plan_mode parameter)
-      8.   TitleMiddleware (auto_title feature)
-      9.   MemoryMiddleware (memory feature)
-      10.  ViewImageMiddleware (vision feature)
-      11.  SubagentLimitMiddleware (subagent feature)
-      12.  LoopDetectionMiddleware (loop_detection feature)
-      13.  ClarificationMiddleware (always last)
+      0-2. 沙箱基础设施（ThreadData → Uploads → Sandbox）
+      3.   DanglingToolCallMiddleware（始终启用）
+      4.   GuardrailMiddleware（guardrail 特性）
+      5.   ToolErrorHandlingMiddleware（始终启用）
+      6.   SummarizationMiddleware（summarization 特性）
+      7.   TodoMiddleware（plan_mode 参数）
+      8.   TitleMiddleware（auto_title 特性）
+      9.   MemoryMiddleware（memory 特性）
+      10.  ViewImageMiddleware（vision 特性）
+      11.  SubagentLimitMiddleware（subagent 特性）
+      12.  LoopDetectionMiddleware（loop_detection 特性）
+      13.  ClarificationMiddleware（始终位于末尾）
 
-    Two-phase ordering:
-      1. Built-in chain — fixed sequential append.
-      2. Extra middleware — inserted via @Next/@Prev.
+    两阶段排序：
+      1. 内建链——按固定顺序追加。
+      2. 额外中间件——通过 @Next/@Prev 锚点插入。
 
-    Each feature value is handled as:
-      - ``False``: skip
-      - ``True``: create the built-in default middleware (not available for
-        ``summarization`` and ``guardrail`` — these require a custom instance)
-      - ``AgentMiddleware`` instance: use directly (custom replacement)
+    每个特性值的处理方式：
+      - ``False``：跳过。
+      - ``True``：创建对应的内建默认中间件（``summarization`` 与
+        ``guardrail`` 不支持此方式，它们需要自定义实例）。
+      - ``AgentMiddleware`` 实例：直接使用（用于自定义替换）。
     """
     chain: list[AgentMiddleware] = []
     extra_tools: list[BaseTool] = []
@@ -304,14 +291,14 @@ def _assemble_from_features(
 
 
 def _insert_extra(chain: list[AgentMiddleware], extras: list[AgentMiddleware]) -> None:
-    """Insert extra middlewares into *chain* using ``@Next``/``@Prev`` anchors.
+    """使用 ``@Next``/``@Prev`` 锚点将额外中间件插入到 *chain* 中。
 
-    Algorithm:
-      1. Validate: no middleware has both @Next and @Prev.
-      2. Conflict detection: two extras targeting same anchor (same or opposite direction) → error.
-      3. Insert unanchored extras before ClarificationMiddleware.
-      4. Insert anchored extras iteratively (supports cross-external anchoring).
-      5. If an anchor cannot be resolved after all rounds → error.
+    算法步骤：
+      1. 校验：同一个中间件不能同时具有 @Next 和 @Prev。
+      2. 冲突检测：两个额外中间件指向同一锚点（同向或反向）即报错。
+      3. 未锚定的额外中间件插入到 ClarificationMiddleware 之前。
+      4. 已锚定的额外中间件采用迭代插入（支持跨额外中间件的相互锚定）。
+      5. 若所有轮次结束后仍无法解析锚点，则报错。
     """
     next_targets: dict[type, type] = {}
     prev_targets: dict[type, type] = {}

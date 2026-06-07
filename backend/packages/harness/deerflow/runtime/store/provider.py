@@ -1,22 +1,9 @@
-"""Sync Store factory.
+"""同步 Store 工厂。
 
-Provides a **sync singleton** and a **sync context manager** for CLI tools
-and the embedded :class:`~deerflow.client.DeerFlowClient`.
-
-The backend mirrors the configured checkpointer so that both always use the
-same persistence technology.  Supported backends: memory, sqlite, postgres.
-
-Usage::
-
-    from deerflow.runtime.store.provider import get_store, store_context
-
-    # Singleton — reused across calls, closed on process exit
-    store = get_store()
-
-    # One-shot — fresh connection, closed on block exit
-    with store_context() as store:
-        store.put(("ns",), "key", {"value": 1})
+    为 CLI 工具与嵌入式 :class:`~deerflow.client.DeerFlowClient` 提供 **同步单例** 与
+    **同步上下文管理器**。后端与异步工厂一样，镜像已配置的 checkpointer。
 """
+
 
 from __future__ import annotations
 
@@ -48,12 +35,12 @@ POSTGRES_CONN_REQUIRED = "checkpointer.connection_string is required for the pos
 
 @contextlib.contextmanager
 def _sync_store_cm(config) -> Iterator[BaseStore]:
-    """Context manager that creates and tears down a sync Store.
-
-    The ``config`` argument is a
-    :class:`~deerflow.config.checkpointer_config.CheckpointerConfig` instance —
-    the same object used by the checkpointer factory.
+    """构造并在退出时释放同步 Store 的上下文管理器。
+    
+        ``config`` 参数是 :class:`~deerflow.config.checkpointer_config.CheckpointerConfig` 实例，
+        与 checkpointer 工厂使用同一对象。
     """
+
     if config.type == "memory":
         from langgraph.store.memory import InMemoryStore
 
@@ -103,15 +90,12 @@ _store_ctx = None  # open context manager keeping the connection alive
 
 
 def get_store() -> BaseStore:
-    """Return the global sync Store singleton, creating it on first call.
-
-    Returns an :class:`~langgraph.store.memory.InMemoryStore` when no
-    checkpointer is configured in *config.yaml* (emits a WARNING in that case).
-
-    Raises:
-        ImportError: If the required package for the configured backend is not installed.
-        ValueError: If ``connection_string`` is missing for a backend that requires it.
+    """返回全局同步 Store 单例，首次调用时创建。
+    
+        当 *config.yaml* 中没有配置 checkpointer 时返回
+        :class:`~langgraph.store.memory.InMemoryStore`（并发出 WARNING）。
     """
+
     global _store, _store_ctx
 
     if _store is not None:
@@ -144,11 +128,12 @@ def get_store() -> BaseStore:
 
 
 def reset_store() -> None:
-    """Reset the sync singleton, forcing recreation on the next call.
-
-    Closes any open backend connections and clears the cached instance.
-    Useful in tests or after a configuration change.
+    """重置同步单例，下次调用时强制重新创建。
+    
+        关闭所有已打开的后端连接，并清空缓存的实例。
+        常用于测试或配置变更后。
     """
+
     global _store, _store_ctx
     if _store_ctx is not None:
         try:
@@ -166,18 +151,12 @@ def reset_store() -> None:
 
 @contextlib.contextmanager
 def store_context() -> Iterator[BaseStore]:
-    """Sync context manager that yields a Store and cleans up on exit.
-
-    Unlike :func:`get_store`, this does **not** cache the instance — each
-    ``with`` block creates and destroys its own connection.  Use it in CLI
-    scripts or tests where you want deterministic cleanup::
-
-        with store_context() as store:
-            store.put(("threads",), thread_id, {...})
-
-    Yields an :class:`~langgraph.store.memory.InMemoryStore` when no
-    checkpointer is configured in *config.yaml*.
+    """产出 Store 并在退出时清理的同步上下文管理器。
+    
+        与 :func:`get_store` 不同，**不会**缓存实例——每个 ``with`` 块都会
+        创建并销毁自己的连接。适用于测试套件或任何需要严格资源隔离的场景。
     """
+
     config = get_app_config()
     if config.checkpointer is None:
         from langgraph.store.memory import InMemoryStore

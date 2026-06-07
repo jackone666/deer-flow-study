@@ -1,4 +1,4 @@
-"""Task tool for delegating work to subagents."""
+"""Task 工具:把子任务委派给独立上下文的子 Agent。"""
 
 import asyncio
 import logging
@@ -33,6 +33,7 @@ _subagent_usage_cache: dict[str, dict[str, int]] = {}
 
 
 def _token_usage_cache_enabled(app_config: "AppConfig | None") -> bool:
+    """判断应用配置是否启用了 token 用量统计。"""
     if app_config is None:
         try:
             app_config = get_app_config()
@@ -42,21 +43,23 @@ def _token_usage_cache_enabled(app_config: "AppConfig | None") -> bool:
 
 
 def _cache_subagent_usage(tool_call_id: str, usage: dict | None, *, enabled: bool = True) -> None:
+    """缓存子 Agent 的 token 用量(供 TokenUsageMiddleware 写回)。"""
     if enabled and usage:
         _subagent_usage_cache[tool_call_id] = usage
 
 
 def pop_cached_subagent_usage(tool_call_id: str) -> dict | None:
+    """从子 Agent 用量缓存中取出并移除指定 tool_call_id 的用量。"""
     return _subagent_usage_cache.pop(tool_call_id, None)
 
 
 def _is_subagent_terminal(result: Any) -> bool:
-    """Return whether a background subagent result is safe to clean up."""
+    """判断后台子 Agent 结果是否已处于可安全清理的终止状态。"""
     return result.status in {SubagentStatus.COMPLETED, SubagentStatus.FAILED, SubagentStatus.CANCELLED, SubagentStatus.TIMED_OUT} or getattr(result, "completed_at", None) is not None
 
 
 async def _await_subagent_terminal(task_id: str, max_polls: int) -> Any | None:
-    """Poll until the background subagent reaches a terminal status or we run out of polls."""
+    """轮询直到后台子 Agent 达到终止状态,或超过最大轮询次数。"""
     for _ in range(max_polls):
         result = get_background_task_result(task_id)
         if result is None:
@@ -68,7 +71,7 @@ async def _await_subagent_terminal(task_id: str, max_polls: int) -> Any | None:
 
 
 async def _deferred_cleanup_subagent_task(task_id: str, trace_id: str, max_polls: int) -> None:
-    """Keep polling a cancelled subagent until it can be safely removed."""
+    """对已取消的子 Agent 持续轮询,直到可以安全清理。"""
     cleanup_poll_count = 0
     while True:
         result = get_background_task_result(task_id)
@@ -85,6 +88,7 @@ async def _deferred_cleanup_subagent_task(task_id: str, trace_id: str, max_polls
 
 
 def _log_cleanup_failure(cleanup_task: asyncio.Task[None], *, trace_id: str, task_id: str) -> None:
+    """记录延迟清理任务失败日志。"""
     if cleanup_task.cancelled():
         return
 
@@ -94,24 +98,24 @@ def _log_cleanup_failure(cleanup_task: asyncio.Task[None], *, trace_id: str, tas
 
 
 def _schedule_deferred_subagent_cleanup(task_id: str, trace_id: str, max_polls: int) -> None:
+    """为已取消的子 Agent 启动延迟清理协程。"""
     logger.debug(f"[trace={trace_id}] Scheduling deferred cleanup for cancelled task {task_id}")
     cleanup_task = asyncio.create_task(_deferred_cleanup_subagent_task(task_id, trace_id, max_polls))
     cleanup_task.add_done_callback(lambda task: _log_cleanup_failure(task, trace_id=trace_id, task_id=task_id))
 
 
 def _find_usage_recorder(runtime: Any) -> Any | None:
-    """Find a callback handler with ``record_external_llm_usage_records`` in the runtime config.
+    """从 runtime config 的 callbacks 中找到带有 ``record_external_llm_usage_records`` 的处理器。
 
-    LangChain may pass ``config["callbacks"]`` in three different shapes:
+    LangChain 可能以三种形式传入 ``config["callbacks"]``:
 
-    - ``None`` (no callbacks registered): no recorder.
-    - A plain ``list[BaseCallbackHandler]``: iterate it directly.
-    - A ``BaseCallbackManager`` instance (e.g. ``AsyncCallbackManager`` on async
-      tool runs): managers are not iterable, so we unwrap ``.handlers`` first.
+    - ``None``:无回调,无 recorder。
+    - ``list[BaseCallbackHandler]``:直接遍历。
+    - ``BaseCallbackManager`` 实例(异步工具运行的 ``AsyncCallbackManager`` 等):
+      manager 不可迭代,先解包 ``.handlers``。
 
-    Any other shape (e.g. a single handler object accidentally passed without a
-    list wrapper) cannot be iterated safely; treat it as "no recorder" rather
-    than raise.
+    其它形态(如意外传入的单个 handler 对象)无法安全迭代,这里按"无 recorder"
+    处理而不是抛错。
     """
     if runtime is None:
         return None
@@ -132,7 +136,7 @@ def _find_usage_recorder(runtime: Any) -> Any | None:
 
 
 def _summarize_usage(records: list[dict] | None) -> dict | None:
-    """Summarize token usage records into a compact dict for SSE events."""
+    """把 token 用量记录聚合成紧凑字典,供 SSE 事件使用。"""
     if not records:
         return None
     return {
@@ -143,9 +147,9 @@ def _summarize_usage(records: list[dict] | None) -> dict | None:
 
 
 def _report_subagent_usage(runtime: Any, result: Any) -> None:
-    """Report subagent token usage to the parent RunJournal, if available.
+    """把子 Agent 的 token 用量上报到父 RunJournal(若存在)。
 
-    Each subagent task must be reported only once (guarded by usage_reported).
+    每个子 Agent 任务只能上报一次(由 ``usage_reported`` 字段守护)。
     """
     if getattr(result, "usage_reported", True):
         return
@@ -164,6 +168,7 @@ def _report_subagent_usage(runtime: Any, result: Any) -> None:
 
 
 def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
+    """从 runtime context 中解析出 ``AppConfig``(若已注入)。"""
     context = getattr(runtime, "context", None)
     if isinstance(context, dict):
         app_config = context.get("app_config")
@@ -173,7 +178,7 @@ def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
 
 
 def _merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -> list[str] | None:
-    """Return the effective subagent skill allowlist under the parent policy."""
+    """在父技能白名单策略下,返回子 Agent 实际可用的技能列表。"""
     if parent is None:
         return child
     if child is None:
@@ -191,40 +196,36 @@ async def task_tool(
     subagent_type: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> str:
-    """Delegate a task to a specialized subagent that runs in its own context.
+    """把任务委派给独立上下文的专用子 Agent。
 
-    Subagents help you:
-    - Preserve context by keeping exploration and implementation separate
-    - Handle complex multi-step tasks autonomously
-    - Execute commands or operations in isolated contexts
+    子 Agent 的作用:
+    - 让探索与实现分离,保留主对话上下文
+    - 自主处理多步复杂任务
+    - 在隔离上下文中执行命令或操作
 
-    Built-in subagent types:
-    - **general-purpose**: A capable agent for complex, multi-step tasks that require
-      both exploration and action. Use when the task requires complex reasoning,
-      multiple dependent steps, or would benefit from isolated context.
-    - **bash**: Command execution specialist for running bash commands. This is only
-      available when host bash is explicitly allowed or when using an isolated shell
-      sandbox such as `AioSandboxProvider`.
+    内置子 Agent 类型:
+    - **general-purpose**: 适合需要探索+操作、复杂推理、多步依赖或隔离上下文的通用 Agent。
+    - **bash**: 命令执行专家。仅在显式允许主机 bash 或使用 ``AioSandboxProvider``
+      等隔离 shell 沙箱时可用。
 
-    Additional custom subagent types may be defined in config.yaml under
-    `subagents.custom_agents`. Each custom type can have its own system prompt,
-    tools, skills, model, and timeout configuration. If an unknown subagent_type
-    is provided, the error message will list all available types.
+    还可以在 ``config.yaml`` 的 ``subagents.custom_agents`` 中定义自定义子 Agent
+    类型,每种类型可拥有自己的 system prompt、工具、技能、模型与超时配置。提供
+    未知的 ``subagent_type`` 时,错误消息会列出所有可用类型。
 
-    When to use this tool:
-    - Complex tasks requiring multiple steps or tools
-    - Tasks that produce verbose output
-    - When you want to isolate context from the main conversation
-    - Parallel research or exploration tasks
+    使用时机:
+    - 需要多步或多工具的复杂任务
+    - 会产生大量输出的任务
+    - 希望把上下文与主对话隔离
+    - 并行的研究或探索任务
 
-    When NOT to use this tool:
-    - Simple, single-step operations (use tools directly)
-    - Tasks requiring user interaction or clarification
+    不应使用本工具的情况:
+    - 简单的单步操作(直接使用工具)
+    - 需要用户交互或澄清的任务
 
     Args:
-        description: A short (3-5 word) description of the task for logging/display. ALWAYS PROVIDE THIS PARAMETER FIRST.
-        prompt: The task description for the subagent. Be specific and clear about what needs to be done. ALWAYS PROVIDE THIS PARAMETER SECOND.
-        subagent_type: The type of subagent to use. ALWAYS PROVIDE THIS PARAMETER THIRD.
+        description: 任务简称(3-5 个单词),用于日志/展示。请始终作为第一个参数提供。
+        prompt: 子 Agent 任务描述,要具体清晰。请始终作为第二个参数提供。
+        subagent_type: 子 Agent 类型。请始终作为第三个参数提供。
     """
     runtime_app_config = _get_runtime_app_config(runtime)
     cache_token_usage = _token_usage_cache_enabled(runtime_app_config)

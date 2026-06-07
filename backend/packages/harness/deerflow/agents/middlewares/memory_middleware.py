@@ -1,4 +1,5 @@
-"""Middleware for memory mechanism."""
+"""用于记忆机制的中间件。"""
+
 
 import logging
 from typing import TYPE_CHECKING, override
@@ -20,30 +21,29 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryMiddlewareState(AgentState):
-    """Compatible with the `ThreadState` schema."""
+    """与 ``ThreadState`` 模式兼容的状态类型。"""
 
     pass
 
 
 class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
-    """Middleware that queues conversation for memory update after agent execution.
+    """在 Agent 执行结束后将会话入队等待记忆更新的中间件。
 
-    This middleware:
-    1. After each agent execution, queues the conversation for memory update
-    2. Only includes user inputs and final assistant responses (ignores tool calls)
-    3. The queue uses debouncing to batch multiple updates together
-    4. Memory is updated asynchronously via LLM summarization
+    该中间件：
+    1. 每次 Agent 结束后将会话入队等待记忆更新；
+    2. 仅保留用户输入与最终助手回复（忽略工具调用）；
+    3. 队列通过去抖将多次更新合并处理；
+    4. 通过 LLM 摘要异步更新记忆。
     """
 
     state_schema = MemoryMiddlewareState
 
     def __init__(self, agent_name: str | None = None, *, memory_config: "MemoryConfig | None" = None):
-        """Initialize the MemoryMiddleware.
+        """初始化 ``MemoryMiddleware``。
 
         Args:
-            agent_name: If provided, memory is stored per-agent. If None, uses global memory.
-            memory_config: Explicit memory config. When omitted, legacy global
-                config fallback is used.
+            agent_name: 若提供则按 Agent 隔离存储记忆；为 ``None`` 时使用全局记忆。
+            memory_config: 显式传入的记忆配置；省略时回退到全局配置。
         """
         super().__init__()
         self._agent_name = agent_name
@@ -51,14 +51,14 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
 
     @override
     def after_agent(self, state: MemoryMiddlewareState, runtime: Runtime) -> dict | None:
-        """Queue conversation for memory update after agent completes.
+        """在 Agent 结束后将会话入队等待记忆更新。
 
         Args:
-            state: The current agent state.
-            runtime: The runtime context.
+            state: 当前 Agent 状态。
+            runtime: 运行期 context。
 
         Returns:
-            None (no state changes needed from this middleware).
+            始终返回 ``None``，本中间件不修改状态。
         """
         config = self._memory_config or get_memory_config()
         if not config.enabled:

@@ -1,3 +1,9 @@
+"""DeerFlow Gateway 的 FastAPI 应用装配。
+
+负责构建 ``FastAPI`` 实例、注册中间件（CORS、CSRF、Auth）、按需挂载路由、
+接入 LangGraph 兼容运行时并管理整个生命周期的启动/关闭。
+"""
+
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
@@ -49,26 +55,12 @@ _SHUTDOWN_HOOK_TIMEOUT_SECONDS = 5.0
 
 
 async def _ensure_admin_user(app: FastAPI) -> None:
-    """Startup hook: handle first boot and migrate orphan threads otherwise.
-
-    After admin creation, migrate orphan threads from the LangGraph
-    store (metadata.user_id unset) to the admin account. This is the
-    "no-auth → with-auth" upgrade path: users who ran DeerFlow without
-    authentication have existing LangGraph thread data that needs an
-    owner assigned.
-        First boot (no admin exists):
-            - Does NOT create any user accounts automatically.
-            - The operator must visit ``/setup`` to create the first admin.
-
-    Subsequent boots (admin already exists):
-      - Runs the one-time "no-auth → with-auth" orphan thread migration for
-        existing LangGraph thread metadata that has no user_id.
-
-    No SQL persistence migration is needed: the four user_id columns
-    (threads_meta, runs, run_events, feedback) only come into existence
-    alongside the auth module via create_all, so freshly created tables
-    never contain NULL-owner rows.
+    """启动钩子：处理首次启动；否则迁移孤立线程。
+    
+            创建管理员后，将 LangGraph store 中没有 ``user_id`` 的孤立线程
+            迁移到新管理员下，以保持可访问。
     """
+
     from sqlalchemy import select
 
     from app.gateway.deps import get_local_provider
@@ -121,13 +113,12 @@ async def _ensure_admin_user(app: FastAPI) -> None:
 
 
 async def _iter_store_items(store, namespace, *, page_size: int = 500):
-    """Paginated async iterator over a LangGraph store namespace.
-
-    Replaces the old hardcoded ``limit=1000`` call with a cursor-style
-    loop so that environments with more than one page of orphans do
-    not silently lose data. Terminates when a page is empty OR when a
-    short page arrives (indicating the last page).
+    """对 LangGraph store 命名空间进行分页的异步迭代器。
+    
+            用基于游标的循环取代了原先写死的 ``limit=1000`` 调用，
+            以便在包含数千条目的环境中安全分页。
     """
+
     offset = 0
     while True:
         batch = await store.asearch(namespace, limit=page_size, offset=offset)
@@ -141,11 +132,12 @@ async def _iter_store_items(store, namespace, *, page_size: int = 500):
 
 
 async def _migrate_orphaned_threads(store, admin_user_id: str) -> int:
-    """Migrate LangGraph store threads with no user_id to the given admin.
-
-    Uses cursor pagination so all orphans are migrated regardless of
-    count. Returns the number of rows migrated.
+    """将 LangGraph store 中没有 ``user_id`` 的线程迁移到指定管理员。
+    
+            使用游标分页，无论条目数量多少都能完成全量迁移。
+            返回被迁移的线程数量。
     """
+
     migrated = 0
     async for item in _iter_store_items(store, ("threads",)):
         metadata = item.value.get("metadata", {})
@@ -159,7 +151,8 @@ async def _migrate_orphaned_threads(store, admin_user_id: str) -> int:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler."""
+    """应用生命周期处理器。"""
+
 
     # Load config and check necessary environment variables at startup.
     # `startup_config` is a local snapshot used only for one-shot bootstrap
@@ -218,11 +211,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application.
-
-    Returns:
-        Configured FastAPI application instance.
+    """创建并配置 FastAPI 应用。
+    
+            Returns:
+                配置好的 FastAPI 应用实例。
     """
+
     config = get_gateway_config()
     docs_url = "/docs" if config.enable_docs else None
     redoc_url = "/redoc" if config.enable_docs else None
@@ -377,11 +371,12 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
-        """Health check endpoint.
-
-        Returns:
-            Service health status information.
+        """健康检查端点。
+        
+                    Returns:
+                        服务健康状态信息。
         """
+
         return {"status": "healthy", "service": "deer-flow-gateway"}
 
     return app

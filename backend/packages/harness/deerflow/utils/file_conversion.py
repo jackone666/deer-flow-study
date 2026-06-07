@@ -1,17 +1,17 @@
-"""File conversion utilities.
+"""文件格式转换工具。
 
-Converts document files (PDF, PPT, Excel, Word) to Markdown.
+将常见文档（PDF、PPT、Excel、Word）转换为 Markdown。
 
-PDF conversion strategy (auto mode):
-  1. Try pymupdf4llm if installed — better heading detection, faster on most files.
-  2. If output is suspiciously short (< _MIN_CHARS_PER_PAGE chars/page, or < 200 chars
-     total when page count is unavailable), treat as image-based and fall back to MarkItDown.
-  3. If pymupdf4llm is not installed, use MarkItDown directly (existing behaviour).
+PDF 转换策略（auto 模式）：
+  1. 优先尝试 pymupdf4llm（若已安装）—— 大多数文件上具有更好的标题识别和速度。
+  2. 若输出明显偏短（每页少于 ``_MIN_CHARS_PER_PAGE`` 字符，或在页数不可用时
+     总字符数少于 200），视为图像型 PDF 并回退到 MarkItDown。
+  3. 若 pymupdf4llm 未安装，则直接使用 MarkItDown（保持原有行为）。
 
-Large files (> ASYNC_THRESHOLD_BYTES) are converted in a thread pool via
-asyncio.to_thread() to avoid blocking the event loop (fixes #1569).
+大于 ``_ASYNC_THRESHOLD_BYTES`` 的大文件通过 ``asyncio.to_thread()`` 丢到
+线程池中执行，避免阻塞事件循环（修复 #1569）。
 
-No FastAPI or HTTP dependencies — pure utility functions.
+本模块不依赖 FastAPI 或 HTTP，纯工具函数集合。
 """
 
 import asyncio
@@ -48,11 +48,18 @@ _MIN_CHARS_PER_PAGE = 50
 
 
 def _pymupdf_output_too_sparse(text: str, file_path: Path) -> bool:
-    """Return True if pymupdf4llm output is suspiciously short (image-based PDF).
+    """判断 pymupdf4llm 的输出是否异常稀疏（疑似图像型 PDF）。
 
-    Uses chars-per-page rather than an absolute threshold so that both short
-    documents (few pages, few chars) and long documents (many pages, many chars)
-    are handled correctly.
+    使用「每页字符数」而非绝对字符阈值，从而同时正确处理短文档（页数少、
+    字符少）和长文档（页数多、字符多）这两种场景。无法获取页数时回退到
+    绝对 200 字符阈值。
+
+    Args:
+        text: pymupdf4llm 提取的 Markdown 文本。
+        file_path: 原始 PDF 路径，仅用于在页数未知时回退读取。
+
+    Returns:
+        若输出过短（疑似图像型 PDF）则返回 ``True``。
     """
     chars = len(text.strip())
     doc = None
@@ -77,10 +84,14 @@ def _pymupdf_output_too_sparse(text: str, file_path: Path) -> bool:
 
 
 def _convert_pdf_with_pymupdf4llm(file_path: Path) -> str | None:
-    """Attempt PDF conversion with pymupdf4llm.
+    """使用 pymupdf4llm 尝试转换 PDF。
 
-    Returns the markdown text, or None if pymupdf4llm is not installed or
-    if conversion fails (e.g. encrypted/corrupt PDF).
+    Args:
+        file_path: 源 PDF 文件路径。
+
+    Returns:
+        转换得到的 Markdown 文本；若 pymupdf4llm 未安装或转换失败
+        （例如加密/损坏的 PDF），则返回 ``None``。
     """
     try:
         import pymupdf4llm
@@ -95,7 +106,14 @@ def _convert_pdf_with_pymupdf4llm(file_path: Path) -> str | None:
 
 
 def _convert_with_markitdown(file_path: Path) -> str:
-    """Convert any supported file to markdown text using MarkItDown."""
+    """使用 MarkItDown 将任意受支持文件转换为 Markdown 文本。
+
+    Args:
+        file_path: 源文件路径。
+
+    Returns:
+        转换得到的 Markdown 文本。
+    """
     from markitdown import MarkItDown
 
     md = MarkItDown()
@@ -103,11 +121,16 @@ def _convert_with_markitdown(file_path: Path) -> str:
 
 
 def _do_convert(file_path: Path, pdf_converter: str) -> str:
-    """Synchronous conversion — called directly or via asyncio.to_thread.
+    """同步执行文档到 Markdown 的转换。
+
+    既可被直接调用，也可通过 :func:`asyncio.to_thread` 在后台线程运行。
+    内部根据 :attr:`pdf_converter` 的取值在 pymupdf4llm 与 MarkItDown 之间
+    选择具体策略。
 
     Args:
-        file_path: Path to the file.
-        pdf_converter: "auto" | "pymupdf4llm" | "markitdown"
+        file_path: 待转换的文件路径。
+        pdf_converter: PDF 转换策略，可选 ``"auto"`` / ``"pymupdf4llm"`` /
+            ``"markitdown"``。
     """
     is_pdf = file_path.suffix.lower() == ".pdf"
 
@@ -136,17 +159,16 @@ def _do_convert(file_path: Path, pdf_converter: str) -> str:
 
 
 async def convert_file_to_markdown(file_path: Path) -> Path | None:
-    """Convert a supported document file to Markdown.
+    """将受支持的文档文件转换为 Markdown。
 
-    PDF files are handled with a two-converter strategy (see module docstring).
-    Large files (> 1 MB) are offloaded to a thread pool to avoid blocking the
-    event loop.
+    PDF 文件采用两种转换器协同的策略（详见模块级 docstring）。
+    大于 1 MB 的文件会被丢到线程池中执行，避免阻塞事件循环。
 
     Args:
-        file_path: Path to the file to convert.
+        file_path: 待转换文件的路径。
 
     Returns:
-        Path to the generated .md file, or None if conversion failed.
+        生成的 ``.md`` 文件路径；若转换失败则返回 ``None``。
     """
     try:
         pdf_converter = _get_pdf_converter()
@@ -205,17 +227,23 @@ _ALLOWED_PDF_CONVERTERS = {"auto", "pymupdf4llm", "markitdown"}
 
 
 def _clean_bold_title(raw: str) -> str:
-    """Normalise a title string that may contain pymupdf4llm bold artefacts.
+    """规范化可能包含 pymupdf4llm 粗体残留的标题字符串。
 
-    pymupdf4llm sometimes emits adjacent bold spans as ``**A** **B**`` instead
-    of a single ``**A B**`` block.  This helper merges those fragments and then
-    strips the outermost ``**...**`` wrapper so the caller gets plain text.
+    pymupdf4llm 偶尔会把相邻的粗体片段输出成 ``**A** **B**`` 的形式，而非
+    单一的 ``**A B**``。本函数先把相邻粗体片段合并，再在最外层确实被
+    ``**...`` 包裹时去掉包裹符号，让调用方得到纯文本标题。
 
-    Examples::
+    示例::
 
         "**Overview**"                       → "Overview"
         "**UNITED STATES** **SECURITIES**"   → "UNITED STATES SECURITIES"
         "plain text"                         → "plain text"  (unchanged)
+
+    Args:
+        raw: 原始标题字符串。
+
+    Returns:
+        规范化后的纯文本标题。
     """
     # Merge adjacent bold spans: "** **" → " "
     merged = re.sub(r"\*\*\s*\*\*", " ", raw).strip()
@@ -226,31 +254,26 @@ def _clean_bold_title(raw: str) -> str:
 
 
 def extract_outline(md_path: Path) -> list[dict]:
-    """Extract document outline (headings) from a Markdown file.
+    """从 Markdown 文件中抽取文档大纲（标题列表）。
 
-    Recognises three heading styles produced by pymupdf4llm:
+    能够识别 pymupdf4llm 产生的三种标题样式：
 
-    1. Standard Markdown headings: lines starting with one or more '#'.
-       Inline ``**...**`` wrappers and adjacent bold spans (``** **``) are
-       cleaned so the title is plain text.
-
-    2. Bold-only structural headings: ``**ITEM 1. BUSINESS**``, ``**PART II**``,
-       etc.  SEC filings use bold+caps for section headings with the same font
-       size as body text, so pymupdf4llm cannot promote them to # headings.
-
-    3. Split-bold headings: ``**1** **Introduction**``, ``**3.2** **Attention**``.
-       pymupdf4llm emits these when the section number and title text are
-       separate spans in the underlying PDF (common in academic papers).
+    1. **标准 Markdown 标题**：以一个或多个 ``#`` 开头的行。会清除内联的
+       ``**...**`` 包裹以及相邻的粗体片段（``** **``），使最终标题为纯文本。
+    2. **仅粗体的结构性标题**：如 ``**ITEM 1. BUSINESS**``、``**PART II**``。
+       SEC 文件中这类段落使用粗体 + 大写且与正文同号字体，因此 pymupdf4llm
+       无法提升为 ``#`` 标题。
+    3. **拆分粗体标题**：如 ``**1** **Introduction**``、``**3.2** **Attention**``。
+       当节编号与标题在原 PDF 中分属不同文本 span 时常见，多见于学术论文。
 
     Args:
-        md_path: Path to the .md file.
+        md_path: ``.md`` 文件路径。
 
     Returns:
-        List of dicts with keys: title (str), line (int, 1-based).
-        When the outline is truncated at MAX_OUTLINE_ENTRIES, a sentinel entry
-        ``{"truncated": True}`` is appended as the last element so callers can
-        render a "showing first N headings" hint without re-scanning the file.
-        Returns an empty list if the file cannot be read or has no headings.
+        标题条目列表，每个条目包含 ``title``（str）与 ``line``（int, 1-based）。
+        当抽取达到 :data:`MAX_OUTLINE_ENTRIES` 上限而被截断时，会在末尾追加
+        一条 ``{"truncated": True}`` 哨兵条目，便于调用方渲染「仅展示前 N 条」
+        提示而无需重新扫描文件。文件无法读取或无标题时返回空列表。
     """
     outline: list[dict] = []
     try:
@@ -289,7 +312,15 @@ def extract_outline(md_path: Path) -> list[dict]:
 
 
 def _get_uploads_config_value(key: str, default: object) -> object:
-    """Read a value from the uploads config, supporting dict and attribute access."""
+    """从 uploads 配置中读取指定键值，同时兼容字典与对象属性两种形态。
+
+    Args:
+        key: 配置键名。
+        default: 当键不存在时返回的默认值。
+
+    Returns:
+        配置项的值，或给定的默认值。
+    """
     cfg = get_app_config()
     uploads_cfg = getattr(cfg, "uploads", None)
     if isinstance(uploads_cfg, dict):
@@ -298,11 +329,14 @@ def _get_uploads_config_value(key: str, default: object) -> object:
 
 
 def _get_pdf_converter() -> str:
-    """Read pdf_converter setting from app config, defaulting to 'auto'.
+    """从应用配置中读取 ``pdf_converter`` 选项，默认 ``'auto'``。
 
-    Normalizes the value to lowercase and validates it against the allowed set
-    so that values like 'AUTO' or 'MarkItDown' from config.yaml don't silently
-    fall through to unexpected behaviour.
+    将读取到的值统一转为小写并对照 :data:`_ALLOWED_PDF_CONVERTERS` 校验，
+    防止 ``config.yaml`` 中形如 ``AUTO``、``MarkItDown`` 的大小写差异被
+    静默忽略而产生意外行为。
+
+    Returns:
+        规范化后的 PDF 转换策略字符串，非法值会回退为 ``"auto"``。
     """
     try:
         raw = str(_get_uploads_config_value("pdf_converter", "auto")).strip().lower()

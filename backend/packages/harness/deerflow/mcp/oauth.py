@@ -1,4 +1,4 @@
-"""OAuth token support for MCP HTTP/SSE servers."""
+"""MCP HTTP/SSE 服务器的 OAuth 令牌支持。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _OAuthToken:
-    """Cached OAuth token."""
+    """缓存中的 OAuth 令牌。
+
+    Attributes:
+        access_token: 访问令牌字符串。
+        token_type: 令牌类型(通常 ``Bearer``)。
+        expires_at: 令牌的过期时间(UTC)。
+    """
 
     access_token: str
     token_type: str
@@ -23,15 +29,21 @@ class _OAuthToken:
 
 
 class OAuthTokenManager:
-    """Acquire/cache/refresh OAuth tokens for MCP servers."""
+    """为 MCP 服务器获取、缓存并按需刷新 OAuth 令牌。"""
 
     def __init__(self, oauth_by_server: dict[str, McpOAuthConfig]):
+        """初始化令牌管理器。
+
+        Args:
+            oauth_by_server: MCP 服务器名到 OAuth 配置的映射。
+        """
         self._oauth_by_server = oauth_by_server
         self._tokens: dict[str, _OAuthToken] = {}
         self._locks: dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in oauth_by_server}
 
     @classmethod
     def from_extensions_config(cls, extensions_config: ExtensionsConfig) -> OAuthTokenManager:
+        """从 :class:`ExtensionsConfig` 抽取启用 OAuth 的服务器并构造管理器。"""
         oauth_by_server: dict[str, McpOAuthConfig] = {}
         for server_name, server_config in extensions_config.get_enabled_mcp_servers().items():
             if server_config.oauth and server_config.oauth.enabled:
@@ -39,12 +51,22 @@ class OAuthTokenManager:
         return cls(oauth_by_server)
 
     def has_oauth_servers(self) -> bool:
+        """是否管理着至少一个启用了 OAuth 的 MCP 服务器。"""
         return bool(self._oauth_by_server)
 
     def oauth_server_names(self) -> list[str]:
+        """返回所有启用 OAuth 的 MCP 服务器名列表。"""
         return list(self._oauth_by_server.keys())
 
     async def get_authorization_header(self, server_name: str) -> str | None:
+        """获取 ``server_name`` 对应的 ``Authorization`` 头,必要时刷新令牌。
+
+        Args:
+            server_name: MCP 服务器名。
+
+        Returns:
+            形如 ``"Bearer xxx"`` 的头值;若该服务器未启用 OAuth 则返回 None。
+        """
         oauth = self._oauth_by_server.get(server_name)
         if not oauth:
             return None
@@ -66,10 +88,12 @@ class OAuthTokenManager:
 
     @staticmethod
     def _is_expiring(token: _OAuthToken, oauth: McpOAuthConfig) -> bool:
+        """判断缓存的令牌是否已经或即将过期(留出 ``refresh_skew_seconds`` 余量)。"""
         now = datetime.now(UTC)
         return token.expires_at <= now + timedelta(seconds=max(oauth.refresh_skew_seconds, 0))
 
     async def _fetch_token(self, oauth: McpOAuthConfig) -> _OAuthToken:
+        """通过 ``client_credentials`` 或 ``refresh_token`` 授权模式拉取新令牌。"""
         import httpx  # pyright: ignore[reportMissingImports]
 
         data: dict[str, str] = {
@@ -120,12 +144,20 @@ class OAuthTokenManager:
 
 
 def build_oauth_tool_interceptor(extensions_config: ExtensionsConfig) -> Any | None:
-    """Build a tool interceptor that injects OAuth Authorization headers."""
+    """构造一个工具拦截器,把 OAuth 头注入到对应 MCP 服务器的工具调用中。
+
+    Args:
+        extensions_config: 全局扩展配置。
+
+    Returns:
+        可传给 MCP 客户端的拦截器;若没有启用 OAuth 的服务器则返回 None。
+    """
     token_manager = OAuthTokenManager.from_extensions_config(extensions_config)
     if not token_manager.has_oauth_servers():
         return None
 
     async def oauth_interceptor(request: Any, handler: Any) -> Any:
+        """为工具请求注入 ``Authorization`` 头,然后调用下层 handler。"""
         header = await token_manager.get_authorization_header(request.server_name)
         if not header:
             return await handler(request)
@@ -138,7 +170,14 @@ def build_oauth_tool_interceptor(extensions_config: ExtensionsConfig) -> Any | N
 
 
 async def get_initial_oauth_headers(extensions_config: ExtensionsConfig) -> dict[str, str]:
-    """Get initial OAuth Authorization headers for MCP server connections."""
+    """为 MCP 服务器初始化连接预取 OAuth 头。
+
+    Args:
+        extensions_config: 全局扩展配置。
+
+    Returns:
+        ``server_name -> Authorization 头值`` 的字典;没有 OAuth 服务器时为空。
+    """
     token_manager = OAuthTokenManager.from_extensions_config(extensions_config)
     if not token_manager.has_oauth_servers():
         return {}

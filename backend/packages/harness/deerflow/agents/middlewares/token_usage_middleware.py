@@ -1,4 +1,5 @@
-"""Middleware for logging token usage and annotating step attribution."""
+"""用于记录 token 用量并标注步骤归属的中间件。"""
+
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ TOKEN_USAGE_ATTRIBUTION_KEY = "token_usage_attribution"
 
 
 def _string_arg(value: Any) -> str | None:
+    """从任意值中尽力抽取非空字符串字段。"""
     if isinstance(value, str):
         normalized = value.strip()
         return normalized or None
@@ -25,6 +27,7 @@ def _string_arg(value: Any) -> str | None:
 
 
 def _normalize_todos(value: Any) -> list[Todo]:
+    """将任意输入归一化为合法 ``Todo`` 字典列表。"""
     if not isinstance(value, list):
         return []
 
@@ -48,6 +51,7 @@ def _normalize_todos(value: Any) -> list[Todo]:
 
 
 def _todo_action_kind(previous: Todo | None, current: Todo) -> str:
+    """执行赋值。"""
     status = current.get("status")
     previous_content = previous.get("content") if previous else None
     current_content = current.get("content")
@@ -73,6 +77,7 @@ def _build_todo_actions(previous_todos: list[Todo], next_todos: list[Todo]) -> l
     # This is the single source of truth for precise write_todos token
     # attribution. The frontend intentionally falls back to a generic
     # "Update to-do list" label when this metadata is missing or malformed.
+    """内部辅助方法。"""
     previous_by_content: dict[str, list[tuple[int, Todo]]] = defaultdict(list)
     matched_previous_indices: set[int] = set()
 
@@ -133,6 +138,7 @@ def _build_todo_actions(previous_todos: list[Todo], next_todos: list[Todo]) -> l
 
 
 def _describe_tool_call(tool_call: dict[str, Any], todos: list[Todo]) -> list[dict[str, Any]]:
+    """执行赋值。"""
     name = _string_arg(tool_call.get("name")) or "unknown"
     args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
     tool_call_id = _string_arg(tool_call.get("id"))
@@ -204,6 +210,7 @@ def _describe_tool_call(tool_call: dict[str, Any], todos: list[Todo]) -> list[di
 
 
 def _infer_step_kind(message: AIMessage, actions: list[dict[str, Any]]) -> str:
+    """内部辅助方法。"""
     if actions:
         first_kind = actions[0].get("kind")
         if len(actions) == 1 and first_kind in {"todo_start", "todo_complete", "todo_update", "todo_remove"}:
@@ -218,7 +225,7 @@ def _infer_step_kind(message: AIMessage, actions: list[dict[str, Any]]) -> str:
 
 
 def _has_tool_call(message: AIMessage, tool_call_id: str) -> bool:
-    """Return True if the AIMessage contains a tool_call with the given id."""
+    """判断 AIMessage 是否包含指定 id 的 ``tool_call``。"""
     for tc in message.tool_calls or []:
         if isinstance(tc, dict):
             if tc.get("id") == tool_call_id:
@@ -229,6 +236,7 @@ def _has_tool_call(message: AIMessage, tool_call_id: str) -> bool:
 
 
 def _build_attribution(message: AIMessage, todos: list[Todo]) -> dict[str, Any]:
+    """执行赋值。"""
     tool_calls = getattr(message, "tool_calls", None) or []
     actions: list[dict[str, Any]] = []
     current_todos = list(todos)
@@ -265,9 +273,10 @@ def _build_attribution(message: AIMessage, todos: list[Todo]) -> dict[str, Any]:
 
 
 class TokenUsageMiddleware(AgentMiddleware):
-    """Logs token usage from model responses and annotates the AI step."""
+    """记录模型响应的 token 用量并标注 AI 步骤的归因信息。"""
 
     def _apply(self, state: AgentState) -> dict | None:
+        """执行赋值。"""
         messages = state.get("messages", [])
         if not messages:
             return None
@@ -351,8 +360,10 @@ class TokenUsageMiddleware(AgentMiddleware):
 
     @override
     def after_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用后同步钩子。"""
         return self._apply(state)
 
     @override
     async def aafter_model(self, state: AgentState, runtime: Runtime) -> dict | None:
+        """模型调用后异步钩子。"""
         return self._apply(state)

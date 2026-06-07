@@ -1,3 +1,13 @@
+"""动态模块解析器。
+
+实现两个高层入口：
+- :func:`resolve_variable` 解析 ``module:attr`` 形式的路径并返回对应变量；
+- :func:`resolve_class` 在此基础上进一步校验结果是类，并可选择校验父类。
+
+通过 ``MODULE_TO_PACKAGE_HINTS`` 已知集成包名，能在依赖缺失时给出可操作
+的安装提示。
+"""
+
 from importlib import import_module
 
 MODULE_TO_PACKAGE_HINTS = {
@@ -9,7 +19,18 @@ MODULE_TO_PACKAGE_HINTS = {
 
 
 def _build_missing_dependency_hint(module_path: str, err: ImportError) -> str:
-    """Build an actionable hint when module import fails."""
+    """当模块导入失败时构建一条可操作的安装提示。
+
+    对于已知集成包（如 ``langchain_openai``），即使 ``ImportError`` 实际
+    来自某个传递依赖，也会优先返回正确的安装包名。
+
+    Args:
+        module_path: 触发 ``ImportError`` 的目标模块路径。
+        err: 抛出的 ``ImportError`` 实例，用于读取 ``err.name``。
+
+    Returns:
+        形如 ``"Missing dependency 'xxx'. Install it with `uv add xxx` ..."`` 的提示。
+    """
     module_root = module_path.split(".", 1)[0]
     missing_module = getattr(err, "name", None) or module_root
 
@@ -26,19 +47,19 @@ def resolve_variable[T](
     variable_path: str,
     expected_type: type[T] | tuple[type, ...] | None = None,
 ) -> T:
-    """Resolve a variable from a path.
+    """从 ``module:attr`` 形式的路径解析出一个变量。
 
     Args:
-        variable_path: The path to the variable (e.g. "parent_package_name.sub_package_name.module_name:variable_name").
-        expected_type: Optional type or tuple of types to validate the resolved variable against.
-            If provided, uses isinstance() to check if the variable is an instance of the expected type(s).
+        variable_path: 形如
+            ``"parent_package.sub_package.module_name:variable_name"`` 的字符串。
+        expected_type: 可选类型或类型元组，用于在返回前做 ``isinstance`` 校验。
 
     Returns:
-        The resolved variable.
+        解析得到的变量。
 
     Raises:
-        ImportError: If the module path is invalid or the attribute doesn't exist.
-        ValueError: If the resolved variable doesn't pass the validation checks.
+        ImportError: 当模块路径不合法或属性不存在时。
+        ValueError: 当解析结果不满足 ``expected_type`` 时。
     """
     try:
         module_path, variable_name = variable_path.rsplit(":", 1)
@@ -71,18 +92,18 @@ def resolve_variable[T](
 
 
 def resolve_class[T](class_path: str, base_class: type[T] | None = None) -> type[T]:
-    """Resolve a class from a module path and class name.
+    """从模块路径和类名解析出一个类对象。
 
     Args:
-        class_path: The path to the class (e.g. "langchain_openai:ChatOpenAI").
-        base_class: The base class to check if the resolved class is a subclass of.
+        class_path: 形如 ``"langchain_openai:ChatOpenAI"`` 的字符串。
+        base_class: 可选基类；若提供，会校验解析结果是该基类的子类。
 
     Returns:
-        The resolved class.
+        解析得到的类对象。
 
     Raises:
-        ImportError: If the module path is invalid or the attribute doesn't exist.
-        ValueError: If the resolved object is not a class or not a subclass of base_class.
+        ImportError: 当模块路径不合法或属性不存在时。
+        ValueError: 当解析结果不是类，或不是 ``base_class`` 的子类时。
     """
     model_class = resolve_variable(class_path, expected_type=type)
 

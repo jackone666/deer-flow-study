@@ -1,11 +1,10 @@
-"""Write initial admin credentials to a restricted file instead of logs.
+"""把初始管理员凭据写入权限受限的文件，而不是日志。
 
-Logging secrets to stdout/stderr is a well-known CodeQL finding
-(py/clear-text-logging-sensitive-data) — in production those logs
-get collected into ELK/Splunk/etc and become a secret sprawl
-source. This helper writes the credential to a 0600 file that only
-the process user can read, and returns the path so the caller can
-log **the path** (not the password) for the operator to pick up.
+将密钥打印到 stdout/stderr 是一个广为人知的 CodeQL 告警
+（py/clear-text-logging-sensitive-data）——生产环境下这些日志会被收集到
+ELK/Splunk 等系统，进而成为凭据扩散的源头。本辅助函数把凭据写入只有进程
+用户能读的 0600 文件，并返回路径，调用方可以记录**路径**（而不是密码），
+供运维人员取用。
 """
 
 from __future__ import annotations
@@ -19,17 +18,21 @@ _CREDENTIAL_FILENAME = "admin_initial_credentials.txt"
 
 
 def write_initial_credentials(email: str, password: str, *, label: str = "initial") -> Path:
-    """Write the admin email + password to ``{base_dir}/admin_initial_credentials.txt``.
+    """把管理员邮箱和密码写入 ``{base_dir}/admin_initial_credentials.txt``。
 
-    The file is created **atomically** with mode 0600 via ``os.open``
-    so the password is never world-readable, even for the single syscall
-    window between ``write_text`` and ``chmod``.
+    文件通过 ``os.open`` **原子地**以 0600 权限创建并覆盖，因此即使在
+    ``write_text`` 和 ``chmod`` 之间的极短窗口内密码也不会被其他用户可读。
 
-    ``label`` distinguishes "initial" (fresh creation) from "reset"
-    (password reset) in the file header so an operator picking up the
-    file after a restart can tell which event produced it.
+    ``label`` 用于在文件头部区分 “initial”（首次创建）和 “reset”
+    （重置密码），方便运维在重启后取文件时能识别出是哪个事件产生的。
 
-    Returns the absolute :class:`Path` to the file.
+    Args:
+        email: 管理员邮箱。
+        password: 管理员密码。
+        label: 文件头部标识，默认 ``"initial"``。
+
+    Returns:
+        Path: 生成文件的绝对路径。
     """
     target = get_paths().base_dir / _CREDENTIAL_FILENAME
     target.parent.mkdir(parents=True, exist_ok=True)

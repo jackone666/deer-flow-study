@@ -1,15 +1,13 @@
-"""Async stream bridge factory.
+"""异步流桥工厂。
 
-Provides an **async context manager** aligned with
-:func:`deerflow.runtime.checkpointer.async_provider.make_checkpointer`.
+    提供与 :func:`deerflow.runtime.checkpointer.async_provider.make_checkpointer` 风格一致的
+    **异步上下文管理器**。例如在 FastAPI lifespan 中使用：
 
-Usage (e.g. FastAPI lifespan)::
+    .. code-block:: python
 
-    from deerflow.agents.stream_bridge import make_stream_bridge
-
-    async with make_stream_bridge() as bridge:
-        app.state.stream_bridge = bridge
+        from deerflow.ag
 """
+
 
 from __future__ import annotations
 
@@ -27,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 @contextlib.asynccontextmanager
 async def make_stream_bridge(app_config: AppConfig | None = None) -> AsyncIterator[StreamBridge]:
-    """Async context manager that yields a :class:`StreamBridge`.
-
-    Falls back to :class:`MemoryStreamBridge` when no configuration is
-    provided and nothing is set globally.
+    """产出 :class:`StreamBridge` 的异步上下文管理器。
+    
+        当没有提供配置且全局也没有设置时，回退到 :class:`MemoryStreamBridge`。
     """
+
     if app_config is None:
         config = get_stream_bridge_config()
     else:

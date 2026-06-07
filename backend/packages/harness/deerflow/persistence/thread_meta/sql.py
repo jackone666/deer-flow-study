@@ -1,4 +1,4 @@
-"""SQLAlchemy-backed thread metadata repository."""
+"""基于 SQLAlchemy 的 thread 元数据 repository。"""
 
 from __future__ import annotations
 
@@ -19,18 +19,26 @@ logger = logging.getLogger(__name__)
 
 
 class ThreadMetaRepository(ThreadMetaStore):
+    """Thread 元数据的 SQLAlchemy repository。"""
+
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        """构造 repository。
+
+        Args:
+            session_factory: 异步 session 工厂。
+        """
         self._sf = session_factory
 
     @staticmethod
     def _row_to_dict(row: ThreadMetaRow) -> dict[str, Any]:
+        """把 :class:`ThreadMetaRow` 序列化为 dict。"""
         d = row.to_dict()
         d["metadata"] = d.pop("metadata_json", None) or {}
         for key in ("created_at", "updated_at"):
             val = d.get(key)
             if isinstance(val, datetime):
-                # SQLite drops tzinfo despite ``DateTime(timezone=True)``;
-                # ``coerce_iso`` normalizes naive values as UTC so the wire format always carries tz.
+                # SQLite 即便声明 ``DateTime(timezone=True)`` 也会丢 tzinfo；
+                # ``coerce_iso`` 把 naive 值视作 UTC，确保线上格式始终带 tz。
                 d[key] = coerce_iso(val)
         return d
 
@@ -43,8 +51,11 @@ class ThreadMetaRepository(ThreadMetaStore):
         display_name: str | None = None,
         metadata: dict | None = None,
     ) -> dict:
-        # Auto-resolve user_id from contextvar when AUTO; explicit None
-        # creates an orphan row (used by migration scripts).
+        """创建一条 thread 元数据记录。
+
+        显式 ``user_id=None`` 会创建 orphan 行（供迁移脚本使用）。
+        """
+        # AUTO 时从 contextvar 解析；显式 None 创建 orphan 行（迁移脚本使用）
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.create")
         now = datetime.now(UTC)
         row = ThreadMetaRow(
@@ -68,37 +79,34 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> dict | None:
+        """按 ID 获取 thread；非所属用户返回 ``None``。"""
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.get")
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)
             if row is None:
                 return None
-            # Enforce owner filter unless explicitly bypassed (user_id=None).
+            # 显式 bypass（user_id=None）时跳过 owner 过滤
             if resolved_user_id is not None and row.user_id != resolved_user_id:
                 return None
             return self._row_to_dict(row)
 
     async def check_access(self, thread_id: str, user_id: str, *, require_existing: bool = False) -> bool:
-        """Check if ``user_id`` has access to ``thread_id``.
+        """检查 ``user_id`` 对 ``thread_id`` 的访问权限。
 
-        Two modes — one row, two distinct semantics depending on what
-        the caller is about to do:
+        同一行支持两种语义，取决于调用方的意图：
 
-        - ``require_existing=False`` (default, permissive):
-          Returns True for: row missing (untracked legacy thread),
-          ``row.user_id`` is None (shared / pre-auth data),
-          or ``row.user_id == user_id``. Use for **read-style**
-          decorators where treating an untracked thread as accessible
-          preserves backward-compat.
+        - ``require_existing=False``（默认，宽松）：
+          当行缺失（未追踪的历史 thread）、``row.user_id`` 为 ``None``
+          （共享/无 auth 数据）或 ``row.user_id == user_id`` 时返回
+          ``True``。用于**只读**装饰器，把未追踪的 thread 视为可访问
+          以保持向后兼容。
 
-        - ``require_existing=True`` (strict):
-          Returns True **only** when the row exists AND
-          (``row.user_id == user_id`` OR ``row.user_id is None``).
-          Use for **destructive / mutating** decorators (DELETE, PATCH,
-          state-update) so a thread that has *already been deleted*
-          cannot be re-targeted by any caller — closing the
-          delete-idempotence cross-user gap where the row vanishing
-          made every other user appear to "own" it.
+        - ``require_existing=True``（严格）：
+          仅在行存在且 (``row.user_id == user_id`` 或 ``row.user_id``
+          为 ``None``) 时返回 ``True``。用于**破坏性/写入**装饰器
+          （DELETE、PATCH、状态更新），避免「已被删除」的 thread 被
+          任何调用方重新命中——关闭「行消失时其他用户都被视为拥有者」
+          这一 delete-idempotence 跨用户漏洞。
         """
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)
@@ -117,10 +125,10 @@ class ThreadMetaRepository(ThreadMetaStore):
         offset: int = 0,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> list[dict[str, Any]]:
-        """Search threads with optional metadata and status filters.
+        """按 metadata / status 搜索 thread。
 
-        Owner filter is enforced by default: caller must be in a user
-        context. Pass ``user_id=None`` to bypass (migration/CLI).
+        默认强制 owner 过滤：调用方必须处于某个 user context 中。
+        传 ``user_id=None`` 可以绕过（迁移/CLI）。
         """
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.search")
         stmt = select(ThreadMetaRow).order_by(ThreadMetaRow.updated_at.desc(), ThreadMetaRow.thread_id.desc())
@@ -138,9 +146,8 @@ class ThreadMetaRepository(ThreadMetaStore):
                 except (ValueError, TypeError) as exc:
                     logger.warning("Skipping metadata filter key %s: %s", ascii(key), exc)
             if applied == 0:
-                # Comma-separated plain string (no list repr / nested
-                # quoting) so the 400 detail surfaced by the Gateway is
-                # easy for clients to read. Sorted for determinism.
+                # 逗号分隔的纯字符串（不带 list repr / 嵌套引号），
+                # 让 Gateway 抛出的 400 detail 对客户端可读；排序以保证稳定。
                 rejected_keys = ", ".join(sorted(str(k) for k in metadata))
                 raise InvalidMetadataFilterError(f"All metadata filter keys were rejected as unsafe: {rejected_keys}")
 
@@ -150,9 +157,9 @@ class ThreadMetaRepository(ThreadMetaStore):
             return [self._row_to_dict(r) for r in result.scalars()]
 
     async def _check_ownership(self, session: AsyncSession, thread_id: str, resolved_user_id: str | None) -> bool:
-        """Return True if the row exists and is owned (or filter bypassed)."""
+        """行存在且属于当前用户（或显式 bypass）时返回 ``True``。"""
         if resolved_user_id is None:
-            return True  # explicit bypass
+            return True  # 显式 bypass
         row = await session.get(ThreadMetaRow, thread_id)
         return row is not None and row.user_id == resolved_user_id
 
@@ -163,7 +170,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        """Update the display_name (title) for a thread."""
+        """更新 thread 的展示名（标题）。"""
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_display_name")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
@@ -178,6 +185,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
+        """更新 thread 状态。"""
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_status")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
@@ -192,11 +200,10 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        """Merge ``metadata`` into ``metadata_json``.
+        """把 ``metadata`` 合并到 ``metadata_json``。
 
-        Read-modify-write inside a single session/transaction so concurrent
-        callers see consistent state. No-op if the row does not exist or
-        the user_id check fails.
+        在同一 session/事务内做 read-modify-write，保证并发调用者看到
+        一致状态。当行不存在或 user_id 校验失败时为 no-op。
         """
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_metadata")
         async with self._sf() as session:
@@ -217,6 +224,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
+        """按 ID 删除 thread；非所属用户不删除。"""
         resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.delete")
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)

@@ -1,3 +1,5 @@
+"""内置工具集合:clarification、present_file、setup/update agent、task、view_image 等。"""
+
 from .clarification_tool import ask_clarification_tool
 from .present_file_tool import present_file_tool
 from .setup_agent_tool import setup_agent

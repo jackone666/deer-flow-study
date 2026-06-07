@@ -1,18 +1,19 @@
 #!/usr/bin/env python
 """
-Debug script for lead_agent.
-Run this file directly in VS Code with breakpoints.
+lead_agent 的调试脚本。
 
-Requirements:
-    Run with `uv run` from the backend/ directory so that the uv workspace
-    resolves deerflow-harness and app packages correctly:
+在 VS Code 中直接以断点方式运行本文件。
+
+要求：
+    在 ``backend/`` 目录下用 ``uv run`` 启动，使 uv workspace
+    能正确解析 ``deerflow-harness`` 与 ``app`` 包：
 
         cd backend && PYTHONPATH=. uv run python debug.py
 
-Usage:
-    1. Set breakpoints in agent.py or other files
-    2. Press F5 or use "Run and Debug" panel
-    3. Input messages in the terminal to interact with the agent
+用法：
+    1. 在 ``agent.py`` 等文件中设置断点
+    2. 按 F5 或使用 "Run and Debug" 面板
+    3. 在终端中输入消息与 agent 交互
 """
 
 import asyncio
@@ -35,18 +36,16 @@ _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
 def _setup_logging(log_level: int = logging.INFO) -> None:
-    """Route logs to ``debug.log`` using *log_level* for the initial root/file setup.
+    """将日志路由到 ``debug.log``，使用 *log_level* 作为根 logger 与文件 handler 的初始级别。
 
-    This configures the root logger and the ``debug.log`` file handler so logs do
-    not print on the interactive console. It is idempotent: any pre-existing
-    handlers on the root logger (e.g. installed by ``logging.basicConfig`` in
-    transitively imported modules) are removed so the debug session output only
-    lands in ``debug.log``.
+    该函数会配置根 logger 与 ``debug.log`` 文件 handler，使日志不在交互式控制台打印。
+    它是幂等的：根 logger 上已存在的 handler（例如由传递导入模块中的
+    ``logging.basicConfig`` 注册的）都会被移除，使调试会话的输出只写入
+    ``debug.log``。
 
-    Note: later config-driven logging adjustments may change named logger
-    verbosity without raising the root logger or file-handler thresholds set
-    here, so the eventual contents of ``debug.log`` may not be filtered solely by
-    this function's ``log_level`` argument.
+    注意：后续由配置驱动的日志调整可能会更改具名 logger 的详细级别，但不会
+    提升此处设置的根 logger 与文件 handler 阈值，因此 ``debug.log`` 的最终
+    内容未必仅由本函数的 ``log_level`` 参数过滤。
     """
     root = logging.root
     for h in list(root.handlers):
@@ -61,6 +60,7 @@ def _setup_logging(log_level: int = logging.INFO) -> None:
 
 
 async def main():
+    """启动 lead_agent 调试会话：初始化日志、配置、agent 并进入 REPL 循环。"""
     # Install file logging first so warnings emitted while loading config do not
     # leak onto the interactive terminal via Python's lastResort handler.
     _setup_logging()

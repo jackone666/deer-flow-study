@@ -1,4 +1,4 @@
-"""User repository interface for abstracting database operations."""
+"""用户仓储接口，用于抽象数据库操作。"""
 
 from abc import ABC, abstractmethod
 
@@ -6,97 +6,95 @@ from app.gateway.auth.models import User
 
 
 class UserNotFoundError(LookupError):
-    """Raised when a user repository operation targets a non-existent row.
+    """当用户仓储操作针对不存在的行时抛出。
 
-    Subclass of :class:`LookupError` so callers that already catch
-    ``LookupError`` for "missing entity" can keep working unchanged,
-    while specific call sites can pin to this class to distinguish
-    "concurrent delete during update" from other lookups.
+    继承自 :class:`LookupError`，因此已经把 ``LookupError`` 当作“实体缺失”
+    处理的调用方可以继续工作；具体调用点可以单独捕获该类，以便把
+    “并发删除期间更新”与其它查询区分开。
     """
 
 
 class UserRepository(ABC):
-    """Abstract interface for user data storage.
+    """用户数据存储的抽象接口。
 
-    Implement this interface to support different storage backends
-    (SQLite)
+    实现该接口即可支持不同的存储后端（SQLite 等）。
     """
 
     @abstractmethod
     async def create_user(self, user: User) -> User:
-        """Create a new user.
+        """创建一个新用户。
 
         Args:
-            user: User object to create
+            user: 待创建的用户对象。
 
         Returns:
-            Created User with ID assigned
+            User: 已创建并分配好 ID 的用户。
 
         Raises:
-            ValueError: If email already exists
+            ValueError: 当邮箱已存在时抛出。
         """
         raise NotImplementedError
 
     @abstractmethod
     async def get_user_by_id(self, user_id: str) -> User | None:
-        """Get user by ID.
+        """按 ID 获取用户。
 
         Args:
-            user_id: User UUID as string
+            user_id: 用户的 UUID 字符串。
 
         Returns:
-            User if found, None otherwise
+            User | None: 找到时返回用户，否则返回 ``None``。
         """
         raise NotImplementedError
 
     @abstractmethod
     async def get_user_by_email(self, email: str) -> User | None:
-        """Get user by email.
+        """按邮箱获取用户。
 
         Args:
-            email: User email address
+            email: 用户邮箱地址。
 
         Returns:
-            User if found, None otherwise
+            User | None: 找到时返回用户，否则返回 ``None``。
         """
         raise NotImplementedError
 
     @abstractmethod
     async def update_user(self, user: User) -> User:
-        """Update an existing user.
+        """更新一个已有用户。
 
         Args:
-            user: User object with updated fields
+            user: 已修改字段的用户对象。
 
         Returns:
-            Updated User
+            User: 更新后的用户。
 
         Raises:
-            UserNotFoundError: If no row exists for ``user.id``. This is
-                a hard failure (not a no-op) so callers cannot mistake a
-                concurrent-delete race for a successful update.
+            UserNotFoundError: 当 ``user.id`` 对应的行不存在时抛出。这是
+                硬错误（不是 no-op），调用方不会把“并发删除竞态”误认成
+                “更新成功”。
         """
         raise NotImplementedError
 
     @abstractmethod
     async def count_users(self) -> int:
-        """Return total number of registered users."""
+        """返回已注册用户的总数。"""
         raise NotImplementedError
 
     @abstractmethod
     async def count_admin_users(self) -> int:
-        """Return number of users with system_role == 'admin'."""
+        """返回 ``system_role == 'admin'`` 的用户数量。"""
         raise NotImplementedError
 
     @abstractmethod
     async def get_user_by_oauth(self, provider: str, oauth_id: str) -> User | None:
-        """Get user by OAuth provider and ID.
+        """按 OAuth Provider + OAuth ID 获取用户。
 
         Args:
-            provider: OAuth provider name (e.g. 'github', 'google')
-            oauth_id: User ID from the OAuth provider
+            provider: OAuth Provider 名（例如 ``'github'``、``'google'``）。
+            oauth_id: OAuth Provider 给出的用户 ID。
 
         Returns:
-            User if found, None otherwise
+            User | None: 找到时返回用户，否则返回 ``None``。
         """
         raise NotImplementedError

@@ -1,8 +1,7 @@
-"""Run lifecycle service layer.
+"""运行（Run）生命周期的服务层。
 
-Centralizes the business logic for creating runs, formatting SSE
-frames, and consuming stream bridge events.  Router modules
-(``thread_runs``, ``runs``) are thin HTTP handlers that delegate here.
+集中处理创建运行、格式化 SSE 帧以及消费流桥接事件等业务逻辑。
+路由器模块（``thread_runs``、``runs``）是轻量的 HTTP 处理器，会将核心逻辑委托到本模块。
 """
 
 from __future__ import annotations
@@ -45,11 +44,19 @@ logger = logging.getLogger(__name__)
 
 
 def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:
-    """Format a single SSE frame.
+    """格式化单个 SSE 帧。
 
-    Field order: ``event:`` -> ``data:`` -> ``id:`` (optional) -> blank line.
-    This matches the LangGraph Platform wire format consumed by the
-    ``useStream`` React hook and the Python ``langgraph-sdk`` SSE decoder.
+    字段顺序为：``event:`` -> ``data:`` -> ``id:``（可选）-> 空行。
+    该格式与 LangGraph Platform 的线协议一致，兼容 ``useStream`` React Hook
+    以及 Python 版 ``langgraph-sdk`` 的 SSE 解码器。
+
+    Args:
+        event: 事件名称。
+        data: 事件数据载荷（可被 JSON 序列化）。
+        event_id: 可选的事件 ID。
+
+    Returns:
+        拼装好的 SSE 帧字符串。
     """
     payload = json.dumps(data, default=str, ensure_ascii=False)
     parts = [f"event: {event}", f"data: {payload}"]
@@ -66,9 +73,15 @@ def format_sse(event: str, data: Any, *, event_id: str | None = None) -> str:
 
 
 def normalize_stream_modes(raw: list[str] | str | None) -> list[str]:
-    """Normalize the stream_mode parameter to a list.
+    """将 ``stream_mode`` 参数标准化为字符串列表。
 
-    Default matches what ``useStream`` expects: values + messages-tuple.
+    默认值与 ``useStream`` 期望保持一致：``values`` + ``messages-tuple``。
+
+    Args:
+        raw: 原始 ``stream_mode`` 参数，可以是单个字符串、字符串列表或 ``None``。
+
+    Returns:
+        标准化后的字符串列表。
     """
     if raw is None:
         return ["values"]
@@ -78,18 +91,22 @@ def normalize_stream_modes(raw: list[str] | str | None) -> list[str]:
 
 
 def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
-    """Convert LangGraph Platform input format to LangChain state dict.
+    """将 LangGraph Platform 的输入格式转换为 LangChain 状态字典。
 
-    Delegates dict→message coercion to ``langchain_core.messages.utils.convert_to_messages``
-    so that ``additional_kwargs`` (e.g. uploaded-file metadata — gh #3132), ``id``,
-    ``name``, and non-human roles (ai/system/tool) survive unchanged.  An earlier
-    hand-rolled version only forwarded ``content`` and collapsed every role to
-    ``HumanMessage``, which silently stripped frontend-supplied attachments.
+    字典到消息对象的转换交由 ``langchain_core.messages.utils.convert_to_messages``
+    完成，这样 ``additional_kwargs``（例如 gh #3132 中的上传文件元数据）、``id``、
+    ``name`` 以及非人类角色（ai/system/tool）都能保持原样。早期的自实现版本只透传
+    ``content`` 字段并将所有角色折叠为 ``HumanMessage``，导致前端传入的附件被静默丢弃。
 
-    Malformed message dicts (missing ``role``/``type``/``content``, unsupported
-    role, etc.) raise ``HTTPException(400)`` with the offending index, instead
-    of bubbling up as a 500.  The gateway is a system boundary, so per-entry
-    validation errors are the right shape for clients to retry against.
+    格式不正确的消息字典（缺少 ``role``/``type``/``content``、不支持的角色等）
+    会抛出 ``HTTPException(400)`` 并附带出错索引，而不是冒泡成 500。
+    Gateway 作为系统边界，逐条校验错误才是便于客户端重试的正确形态。
+
+    Args:
+        raw_input: LangGraph Platform 风格的输入字典，可能为 ``None``。
+
+    Returns:
+        转换后的 LangChain 状态字典。
     """
     if raw_input is None:
         return {}
@@ -138,16 +155,14 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
 
 
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:
-    """Merge whitelisted keys from ``body.context`` into both ``config['configurable']``
-    and ``config['context']`` so they are visible to legacy configurable readers and
-    to LangGraph ``ToolRuntime.context`` consumers (e.g. the ``setup_agent`` tool —
-    see issue #2677).
+    """将白名单中的键从 ``body.context`` 合并到 ``config['configurable']`` 与
+    ``config['context']`` 两处，以便兼容旧的可配置读取器以及 LangGraph 的
+    ``ToolRuntime.context`` 消费者（例如 ``setup_agent`` 工具——参见 issue #2677）。
 
-    ``user_id`` is intentionally propagated into ``config['context']`` in addition to
-    the whitelisted keys, so non-web callers (e.g. IM channels) that supply identity in
-    ``body.context`` keep it on ``ToolRuntime.context``. It is merged with
-    ``setdefault`` so a server-authenticated id stamped by
-    :func:`inject_authenticated_user_context` always wins over the client-supplied one.
+    除白名单键以外，``user_id`` 也会被显式写入 ``config['context']``，使得非 Web
+    调用方（例如 IM 频道）在 ``body.context`` 中提供身份时，该身份仍能保留在
+    ``ToolRuntime.context`` 上。合并时使用 ``setdefault``，因此由
+    :func:`inject_authenticated_user_context` 写入的服务端认证 ID 总是优先于客户端传入的值。
     """
     if not context:
         return
@@ -164,11 +179,10 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
 
 
 def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
-    """Stamp the authenticated user into the run context for background tools.
+    """将已认证用户写入运行上下文，以便后台工具使用。
 
-    Tool execution may happen after the request handler has returned, so tools
-    that persist user-scoped files should not rely only on ambient ContextVars.
-    The value comes from server-side auth state, never from client context.
+    工具执行可能在请求处理函数返回之后才发生，因此负责持久化用户范围文件的工具
+    不能仅依赖环境中的 ContextVar。该值来自服务端认证状态，永远不取自客户端上下文。
     """
 
     user = getattr(request.state, "user", None)
@@ -185,13 +199,11 @@ def inject_authenticated_user_context(config: dict[str, Any], request: Request) 
 
 
 def resolve_agent_factory(assistant_id: str | None):
-    """Resolve the agent factory callable from config.
+    """根据配置解析生成代理的工厂可调用对象。
 
-    Custom agents are implemented as ``lead_agent`` + an ``agent_name``
-    injected into ``configurable`` or ``context`` — see
-    :func:`build_run_config`.  All ``assistant_id`` values therefore map to the
-    same factory; the routing happens inside ``make_lead_agent`` when it reads
-    ``cfg["agent_name"]``.
+    自定义代理都实现为 ``lead_agent`` 加上注入到 ``configurable`` 或 ``context``
+    的 ``agent_name``，详见 :func:`build_run_config`。因此所有 ``assistant_id`` 值
+    都映射到同一个工厂，路由逻辑由 ``make_lead_agent`` 读取 ``cfg["agent_name"]`` 时完成。
     """
     from deerflow.agents.lead_agent.agent import make_lead_agent
 
@@ -205,19 +217,25 @@ def build_run_config(
     *,
     assistant_id: str | None = None,
 ) -> dict[str, Any]:
-    """Build a RunnableConfig dict for the agent.
+    """为代理构建 ``RunnableConfig`` 字典。
 
-    When *assistant_id* refers to a custom agent (anything other than
-    ``"lead_agent"`` / ``None``), the name is forwarded as ``agent_name`` in
-    whichever runtime options container is active: ``context`` for
-    LangGraph >= 0.6.0 requests, otherwise ``configurable``.
-    ``make_lead_agent`` reads this key to load the matching
-    ``agents/<name>/SOUL.md`` and per-agent config — without it the agent
-    silently runs as the default lead agent.
+    当 ``assistant_id`` 指向一个自定义代理（除 ``"lead_agent"`` / ``None`` 之外的任何值）时，
+    其名称会以 ``agent_name`` 形式写入当前激活的运行时选项容器：LangGraph >= 0.6.0
+    的请求使用 ``context``，否则使用 ``configurable``。
+    ``make_lead_agent`` 会读取该键以加载对应的 ``agents/<name>/SOUL.md`` 和该代理的配置——
+    若缺失该键，代理将悄无声息地以默认 lead agent 身份运行。
 
-    This mirrors the channel manager's ``_resolve_run_params`` logic so that
-    the LangGraph Platform-compatible HTTP API and the IM channel path behave
-    identically.
+    本函数镜像了 channel manager 中 ``_resolve_run_params`` 的逻辑，从而保证
+    LangGraph Platform 兼容的 HTTP API 与 IM 频道路径行为完全一致。
+
+    Args:
+        thread_id: 线程 ID。
+        request_config: 客户端传入的可选 ``config`` 字典。
+        metadata: 客户端传入的可选元数据字典。
+        assistant_id: 可选的助手 ID，用于指代自定义代理。
+
+    Returns:
+        构造好的 ``RunnableConfig`` 字典。
     """
     config: dict[str, Any] = {"recursion_limit": 100}
     if request_config:
@@ -280,17 +298,16 @@ async def start_run(
     thread_id: str,
     request: Request,
 ) -> RunRecord:
-    """Create a RunRecord and launch the background agent task.
+    """创建 ``RunRecord`` 并启动后台代理任务。
 
     Parameters
     ----------
     body : RunCreateRequest
-        The validated request body (typed as Any to avoid circular import
-        with the router module that defines the Pydantic model).
+        校验后的请求体（声明为 ``Any`` 以避免与定义 Pydantic 模型的路由器模块产生循环导入）。
     thread_id : str
-        Target thread.
+        目标线程 ID。
     request : Request
-        FastAPI request — used to retrieve singletons from ``app.state``.
+        FastAPI 请求对象——用于从 ``app.state`` 取出单例。
     """
     bridge = get_stream_bridge(request)
     run_mgr = get_run_manager(request)
@@ -389,11 +406,11 @@ async def sse_consumer(
     request: Request,
     run_mgr: RunManager,
 ):
-    """Async generator that yields SSE frames from the bridge.
+    """从流桥接器消费事件并产出 SSE 帧的异步生成器。
 
-    The ``finally`` block implements ``on_disconnect`` semantics:
-    - ``cancel``: abort the background task on client disconnect.
-    - ``continue``: let the task run; events are discarded.
+    ``finally`` 块实现了 ``on_disconnect`` 语义：
+    - ``cancel``：在客户端断开时中止后台任务。
+    - ``continue``：让任务继续运行，事件直接丢弃。
     """
     last_event_id = request.headers.get("Last-Event-ID")
     try:
@@ -423,28 +440,22 @@ async def wait_for_run_completion(
     request: Request,
     run_mgr: RunManager,
 ) -> bool:
-    """Block until the run publishes ``END_SENTINEL``, honouring on_disconnect.
+    """阻塞等待运行发布 ``END_SENTINEL``，并尊重 ``on_disconnect`` 语义。
 
-    The non-streaming ``/wait`` endpoints used to ``await record.task``
-    directly with no disconnect handling.  When the client (or an
-    intermediate HTTP proxy) timed out during a long tool call such as
-    ``pip install``, the handler would swallow ``CancelledError`` and
-    serialize whatever checkpoint happened to exist — masking a half-finished
-    run as a normal completion (issue #3265).
+    之前的非流式 ``/wait`` 端点直接 ``await record.task``，没有处理客户端断开的情况。
+    当客户端（或中间 HTTP 代理）在 ``pip install`` 这类长工具调用中超时时，处理器
+    会吞掉 ``CancelledError`` 并把当时恰好存在的检查点序列化返回——把一个未完成
+    的运行伪装成正常完成（issue #3265）。
 
-    This helper consumes the same bridge that ``sse_consumer`` does so the
-    wait path shares its disconnect semantics: each wake-up polls
-    ``request.is_disconnected()``; on a real disconnect it cancels the
-    background run when ``record.on_disconnect`` is ``cancel``.  The bridge's
-    heartbeat sentinels guarantee at least one wake-up per
-    ``heartbeat_interval`` even when the agent emits no events for a while.
+    本辅助函数复用 ``sse_consumer`` 所用的同一个流桥接器，因此等待路径与流式路径
+    共享断开处理语义：每次唤醒都会轮询 ``request.is_disconnected()``；在真正断开
+    且 ``record.on_disconnect`` 为 ``cancel`` 时取消后台运行。当代理长时间没有事件
+    产出时，桥接器的心跳哨兵保证至少每个 ``heartbeat_interval`` 触发一次唤醒。
 
     Returns:
-        ``True`` when ``END_SENTINEL`` was observed (run reached a terminal
-        state), ``False`` when the loop exited because the client
-        disconnected.  Callers must skip checkpoint serialization on
-        ``False`` so a partial checkpoint is not returned as a normal
-        response.
+        当观察到 ``END_SENTINEL``（运行进入终止状态）时返回 ``True``；当因客户端断开
+        而退出循环时返回 ``False``。调用方必须在返回 ``False`` 时跳过检查点序列化，
+        以免把部分检查点当作正常响应返回。
     """
     completed = False
     try:

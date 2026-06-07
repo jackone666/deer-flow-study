@@ -1,4 +1,4 @@
-"""ORM model for thread metadata."""
+"""Thread 元数据的 ORM 模型。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,18 @@ from deerflow.persistence.base import Base
 
 
 class ThreadMetaRow(Base):
+    """Thread 元数据表对应的 ORM 行。
+
+    Attributes:
+        thread_id: 主键。
+        assistant_id: 关联的 assistant ID。
+        user_id: 所属用户 ID。
+        display_name: 展示名（标题）。
+        status: 状态，默认 ``idle``。
+        metadata_json: 自定义元数据 JSON。
+        created_at / updated_at: 创建与更新时间（带 tz）。
+    """
+
     __tablename__ = "threads_meta"
 
     thread_id: Mapped[str] = mapped_column(String(64), primary_key=True)

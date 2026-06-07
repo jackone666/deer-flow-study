@@ -1,4 +1,4 @@
-"""Local-filesystem implementation of ``SkillStorage``."""
+"""基于本地文件系统的 :class:`SkillStorage` 实现。"""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ DEFAULT_SKILLS_CONTAINER_PATH = "/mnt/skills"
 
 
 class LocalSkillStorage(SkillStorage):
-    """Skill storage backed by the local filesystem.
+    """以本地文件系统为后端的技能存储。
 
-    Layout::
+    目录结构::
 
         <root>/public/<name>/SKILL.md
         <root>/custom/<name>/SKILL.md
@@ -38,6 +38,13 @@ class LocalSkillStorage(SkillStorage):
         container_path: str = DEFAULT_SKILLS_CONTAINER_PATH,
         app_config=None,
     ) -> None:
+        """初始化本地技能存储。
+
+        Args:
+            host_path: 主机端根路径;为 None 时使用 :func:`get_app_config` 解析。
+            container_path: 容器中 skills 挂载根路径,默认 :data:`DEFAULT_SKILLS_CONTAINER_PATH`。
+            app_config: 可选应用配置对象,默认通过 :func:`get_app_config` 读取。
+        """
         super().__init__(container_path=container_path)
         if host_path is None:
             from deerflow.config import get_app_config
@@ -52,16 +59,20 @@ class LocalSkillStorage(SkillStorage):
     # ------------------------------------------------------------------
 
     def get_skills_root_path(self) -> Path:
+        """返回本地主机上的 skills 根目录路径。"""
         return self._host_root
 
     def custom_skill_exists(self, name: str) -> bool:
+        """判断自定义技能是否存在。"""
         return self.get_custom_skill_file(name).exists()
 
     def public_skill_exists(self, name: str) -> bool:
+        """判断公开(内置)技能是否存在。"""
         normalized_name = self.validate_skill_name(name)
         return (self._host_root / SkillCategory.PUBLIC.value / normalized_name / SKILL_MD_FILE).exists()
 
     def _iter_skill_files(self) -> Iterable[tuple[SkillCategory, Path, Path]]:
+        """遍历所有分类目录,产出每个 SKILL.md 所在的三元组。"""
         if not self._host_root.exists():
             return
         for category in SkillCategory:
@@ -75,11 +86,13 @@ class LocalSkillStorage(SkillStorage):
                 yield category, category_path, Path(current_root) / SKILL_MD_FILE
 
     def read_custom_skill(self, name: str) -> str:
+        """读取自定义技能的 SKILL.md 内容。"""
         if not self.custom_skill_exists(name):
             raise FileNotFoundError(f"Custom skill '{name}' not found.")
         return (self.get_custom_skill_dir(name) / SKILL_MD_FILE).read_text(encoding="utf-8")
 
     def write_custom_skill(self, name: str, relative_path: str, content: str) -> None:
+        """原子地写入自定义技能下的某个文件,落地后调整为沙箱可读。"""
         target = self.validate_relative_path(relative_path, self.get_custom_skill_dir(name))
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -94,6 +107,7 @@ class LocalSkillStorage(SkillStorage):
         make_skill_written_path_sandbox_readable(self.get_custom_skill_dir(name), target)
 
     async def ainstall_skill_from_archive(self, archive_path: str | Path) -> dict:
+        """从 ``.skill`` 压缩包异步安装一个技能,过程中会做安全扫描与原子搬迁。"""
         import zipfile
 
         from deerflow.skills.installer import (
@@ -157,6 +171,7 @@ class LocalSkillStorage(SkillStorage):
         }
 
     def delete_custom_skill(self, name: str, *, history_meta: dict | None = None) -> None:
+        """删除自定义技能;若提供 ``history_meta`` 则先追加历史记录(只读场景会被忽略)。"""
         self.validate_skill_name(name)
         self.ensure_custom_skill_is_editable(name)
         target = self.get_custom_skill_dir(name)
@@ -176,6 +191,7 @@ class LocalSkillStorage(SkillStorage):
             shutil.rmtree(target)
 
     def append_history(self, name: str, record: dict) -> None:
+        """在 ``.history/<name>.jsonl`` 中追加一条带时间戳的记录。"""
         self.validate_skill_name(name)
         payload = {"ts": datetime.now(UTC).isoformat(), **record}
         history_path = self.get_skill_history_file(name)
@@ -185,6 +201,7 @@ class LocalSkillStorage(SkillStorage):
             f.write("\n")
 
     def read_history(self, name: str) -> list[dict]:
+        """读取 ``name`` 的全部历史记录,按文件顺序返回。"""
         self.validate_skill_name(name)
         history_path = self.get_skill_history_file(name)
         if not history_path.exists():

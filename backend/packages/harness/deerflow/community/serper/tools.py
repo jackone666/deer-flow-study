@@ -1,8 +1,7 @@
-"""
-Web Search Tool - Search the web using Serper (Google Search API).
+"""Web 搜索工具:基于 Serper(Google Search API)进行搜索。
 
-Serper provides real-time Google Search results via a JSON API.
-An API key is required. Sign up at https://serper.dev to get one.
+Serper 通过 JSON API 提供实时 Google 搜索结果,需要 API key,可到
+https://serper.dev 注册。
 """
 
 import json
@@ -21,6 +20,7 @@ _api_key_warned = False
 
 
 def _get_api_key() -> str | None:
+    """从工具配置或环境变量中读取 Serper API key。"""
     config = get_app_config().get_tool_config("web_search")
     if config is not None:
         api_key = config.model_extra.get("api_key")
@@ -31,11 +31,11 @@ def _get_api_key() -> str | None:
 
 @tool("web_search", parse_docstring=True)
 def web_search_tool(query: str, max_results: int = 5) -> str:
-    """Search the web for information using Google Search via Serper.
+    """通过 Serper 调用 Google Search 检索 Web 信息。
 
     Args:
-        query: Search keywords describing what you want to find. Be specific for better results.
-        max_results: Maximum number of search results to return. Default is 5.
+        query: 描述待搜索内容的关键词,越具体效果越好。
+        max_results: 返回的最大搜索结果数,默认 5。
     """
     global _api_key_warned
 

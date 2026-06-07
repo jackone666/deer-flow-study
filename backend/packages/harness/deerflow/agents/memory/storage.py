@@ -1,4 +1,4 @@
-"""Memory storage providers."""
+"""记忆存储提供者。"""
 
 import abc
 import json
@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def utc_now_iso_z() -> str:
-    """Current UTC time as ISO-8601 with ``Z`` suffix (matches prior naive-UTC output)."""
+    """返回带 ``Z`` 后缀的 UTC ISO-8601 时间戳（与历史朴素 UTC 输出保持一致）。"""
     return datetime.now(UTC).isoformat().removesuffix("+00:00") + "Z"
 
 
 def create_empty_memory() -> dict[str, Any]:
-    """Create an empty memory structure."""
+    """创建一份空白的记忆结构。"""
     return {
         "version": "1.0",
         "lastUpdated": utc_now_iso_z(),
@@ -41,29 +41,29 @@ def create_empty_memory() -> dict[str, Any]:
 
 
 class MemoryStorage(abc.ABC):
-    """Abstract base class for memory storage providers."""
+    """记忆存储提供者的抽象基类。"""
 
     @abc.abstractmethod
     def load(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-        """Load memory data for the given agent."""
+        """加载指定 Agent 的记忆数据。"""
         pass
 
     @abc.abstractmethod
     def reload(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-        """Force reload memory data for the given agent."""
+        """强制重新加载指定 Agent 的记忆数据。"""
         pass
 
     @abc.abstractmethod
     def save(self, memory_data: dict[str, Any], agent_name: str | None = None, *, user_id: str | None = None) -> bool:
-        """Save memory data for the given agent."""
+        """保存指定 Agent 的记忆数据。"""
         pass
 
 
 class FileMemoryStorage(MemoryStorage):
-    """File-based memory storage provider."""
+    """基于文件的记忆存储提供者。"""
 
     def __init__(self):
-        """Initialize the file memory storage."""
+        """初始化文件记忆存储。"""
         # Per-user/agent memory cache: keyed by (user_id, agent_name) tuple (None = global)
         # Value: (memory_data, file_mtime)
         self._memory_cache: dict[tuple[str | None, str | None], tuple[dict[str, Any], float | None]] = {}
@@ -71,10 +71,10 @@ class FileMemoryStorage(MemoryStorage):
         self._cache_lock = threading.Lock()
 
     def _validate_agent_name(self, agent_name: str) -> None:
-        """Validate that the agent name is safe to use in filesystem paths.
+        """校验 Agent 名称在文件系统路径中的安全性。
 
-        Uses the repository's established AGENT_NAME_PATTERN to ensure consistency
-        across the codebase and prevent path traversal or other problematic characters.
+        使用仓库统一的 ``AGENT_NAME_PATTERN`` 确保跨模块一致，并防止
+        路径穿越或其他问题字符。
         """
         if not agent_name:
             raise ValueError("Agent name must be a non-empty string.")
@@ -82,7 +82,7 @@ class FileMemoryStorage(MemoryStorage):
             raise ValueError(f"Invalid agent name {agent_name!r}: names must match {AGENT_NAME_PATTERN.pattern}")
 
     def _get_memory_file_path(self, agent_name: str | None = None, *, user_id: str | None = None) -> Path:
-        """Get the path to the memory file."""
+        """获取记忆文件对应的路径。"""
         if user_id is not None:
             if agent_name is not None:
                 self._validate_agent_name(agent_name)
@@ -102,7 +102,7 @@ class FileMemoryStorage(MemoryStorage):
         return get_paths().memory_file
 
     def _load_memory_from_file(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-        """Load memory data from file."""
+        """从文件加载记忆数据。"""
         file_path = self._get_memory_file_path(agent_name, user_id=user_id)
 
         if not file_path.exists():
@@ -118,10 +118,11 @@ class FileMemoryStorage(MemoryStorage):
 
     @staticmethod
     def _cache_key(agent_name: str | None = None, *, user_id: str | None = None) -> tuple[str | None, str | None]:
+        """返回值。"""
         return (user_id, agent_name)
 
     def load(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-        """Load memory data (cached with file modification time check)."""
+        """加载记忆数据（带文件 mtime 检查的缓存）。"""
         file_path = self._get_memory_file_path(agent_name, user_id=user_id)
         cache_key = self._cache_key(agent_name, user_id=user_id)
 
@@ -143,7 +144,7 @@ class FileMemoryStorage(MemoryStorage):
         return memory_data
 
     def reload(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
-        """Reload memory data from file, forcing cache invalidation."""
+        """强制从文件重新加载记忆数据并失效缓存。"""
         file_path = self._get_memory_file_path(agent_name, user_id=user_id)
         memory_data = self._load_memory_from_file(agent_name, user_id=user_id)
         cache_key = self._cache_key(agent_name, user_id=user_id)
@@ -158,7 +159,7 @@ class FileMemoryStorage(MemoryStorage):
         return memory_data
 
     def save(self, memory_data: dict[str, Any], agent_name: str | None = None, *, user_id: str | None = None) -> bool:
-        """Save memory data to file and update cache."""
+        """将记忆数据保存到文件并更新缓存。"""
         file_path = self._get_memory_file_path(agent_name, user_id=user_id)
         cache_key = self._cache_key(agent_name, user_id=user_id)
 
@@ -194,7 +195,7 @@ _storage_lock = threading.Lock()
 
 
 def get_memory_storage() -> MemoryStorage:
-    """Get the configured memory storage instance."""
+    """获取已配置的记忆存储实例。"""
     global _storage_instance
     if _storage_instance is not None:
         return _storage_instance

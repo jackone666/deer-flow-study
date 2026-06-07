@@ -1,19 +1,11 @@
-"""End-to-end demo: SafetyFinishReasonMiddleware on the real DeerFlow lead-agent.
+"""端到端示例：在真实 DeerFlow lead-agent 上演示 ``SafetyFinishReasonMiddleware``。
 
-What it proves
---------------
-- The real ``make_lead_agent`` / ``DeerFlowClient`` pipeline is built (full
-  18-middleware chain, sandbox, tools, etc.).
-- A model that returns ``finish_reason='content_filter'`` + ``tool_calls``
-  triggers SafetyFinishReasonMiddleware.
-- LangChain's tool router never invokes ``write_file`` — the truncated
-  arguments do **not** reach the sandbox.
-- A ``safety_termination`` custom event is emitted on the stream and the
-  final AIMessage carries the observability stamp.
-
-Run from backend/ directory:
-    PYTHONPATH=. uv run python scripts/e2e_safety_termination_demo.py
+    它证明了什么
+    ------------
+    - 真实 ``make_lead_agent`` / ``DeerFlowClient`` 流水线被构建起来（包含完整的 18 个中间件、沙箱、工具等）。
+    - 返回 ``finish_reason='content_filter'`` + ``tool_calls`` 的模型响应能被正确处理：中间件剥离 tool 调用、不执行任何工具、运行以安全 finish reason 终止。
 """
+
 
 from __future__ import annotations
 
@@ -30,22 +22,30 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 
 class _ContentFilteredFakeModel(BaseChatModel):
-    """First call returns finish_reason=content_filter + truncated write_file
-    tool_call. Subsequent calls return a normal stop response so the agent
-    can terminate (the middleware should make a second call unnecessary by
-    clearing tool_calls, but we keep this safety net in case loop-detection
-    or anything else triggers another model invocation)."""
+    """首次调用返回 ``finish_reason=content_filter`` 加一个被截断的 ``write_file`` ``tool_call``。
+        后续调用返回正常的 stop 响应，使 agent 可以终止（中间件应做到无需第二次调用）。
+    """
+
 
     call_count: int = 0
 
     @property
     def _llm_type(self) -> str:
+        """返回值。"""
         return "fake-content-filtered"
 
     def bind_tools(self, tools, **kwargs):
+        """返回值。
+        
+                Args:
+                    self: 参数说明。
+                    tools: 参数说明。
+                    **kwargs: 可变关键字参数。
+        """
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        """内部辅助方法。"""
         self.call_count += 1
         if self.call_count == 1:
             msg = AIMessage(
@@ -74,6 +74,7 @@ class _ContentFilteredFakeModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=msg)])
 
     async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        """返回值。"""
         return self._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
@@ -89,6 +90,11 @@ def main() -> int:
     # so we patch both attribute slots — the source-of-truth patch on
     # ``factory.create_chat_model`` doesn't propagate back into already-
     # imported names.
+    """执行相应操作。
+    
+            Returns:
+                int。
+    """
     import deerflow.agents.lead_agent.agent as lead_agent_module
     import deerflow.client as client_module
 
@@ -99,6 +105,12 @@ def main() -> int:
     }
 
     def fake_create_chat_model(*args, **kwargs):
+        """返回值。
+        
+                Args:
+                    *args: 可变位置参数。
+                    **kwargs: 可变关键字参数。
+        """
         return fake
 
     lead_agent_module.create_chat_model = fake_create_chat_model

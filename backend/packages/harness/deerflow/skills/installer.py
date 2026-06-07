@@ -1,7 +1,6 @@
-"""Shared skill archive installation logic.
+"""共享的技能压缩包安装逻辑。
 
-Pure business logic — no FastAPI/HTTP dependencies.
-Both Gateway and Client delegate to these functions.
+纯业务逻辑,不依赖 FastAPI/HTTP,Gateway 与 Client 都委托给本模块。
 """
 
 import asyncio
@@ -23,15 +22,15 @@ _PROMPT_INPUT_SUFFIXES = frozenset({".json", ".markdown", ".md", ".rst", ".txt",
 
 
 class SkillAlreadyExistsError(ValueError):
-    """Raised when a skill with the same name is already installed."""
+    """同名技能已安装时抛出。"""
 
 
 class SkillSecurityScanError(ValueError):
-    """Raised when a skill archive fails security scanning."""
+    """技能压缩包未通过安全扫描时抛出。"""
 
 
 def is_unsafe_zip_member(info: zipfile.ZipInfo) -> bool:
-    """Return True if the zip member path is absolute or attempts directory traversal."""
+    """判断 zip 成员路径是否绝对或包含目录穿越。"""
     name = info.filename
     if not name:
         return False
@@ -49,26 +48,27 @@ def is_unsafe_zip_member(info: zipfile.ZipInfo) -> bool:
 
 
 def is_symlink_member(info: zipfile.ZipInfo) -> bool:
-    """Detect symlinks based on the external attributes stored in the ZipInfo."""
+    """根据 ZipInfo 的 external_attr 判断是否为符号链接。"""
     mode = info.external_attr >> 16
     return stat.S_ISLNK(mode)
 
 
 def should_ignore_archive_entry(path: Path) -> bool:
-    """Return True for macOS metadata dirs and dotfiles."""
+    """macOS 元数据目录与点文件返回 True。"""
     return path.name.startswith(".") or path.name == "__MACOSX"
 
 
 def resolve_skill_dir_from_archive(temp_path: Path) -> Path:
-    """Locate the skill root directory from extracted archive contents.
+    """在解压后的目录中定位技能根目录,自动过滤 macOS 元数据与点文件。
 
-    Filters out macOS metadata (__MACOSX) and dotfiles (.DS_Store).
+    Args:
+        temp_path: 已解压的临时根目录。
 
     Returns:
-        Path to the skill directory.
+        技能目录路径。
 
     Raises:
-        ValueError: If the archive is empty after filtering.
+        ValueError: 过滤后压缩包为空。
     """
     items = [p for p in temp_path.iterdir() if not should_ignore_archive_entry(p)]
     if not items:
@@ -83,15 +83,20 @@ def safe_extract_skill_archive(
     dest_path: Path,
     max_total_size: int = 512 * 1024 * 1024,
 ) -> None:
-    """Safely extract a skill archive with security protections.
+    """以安全保护方式解压技能压缩包。
 
-    Protections:
-    - Reject absolute paths and directory traversal (..).
-    - Skip symlink entries instead of materialising them.
-    - Enforce a hard limit on total uncompressed size (zip bomb defence).
+    保护策略:
+    - 拒绝绝对路径与目录穿越(``..``)。
+    - 跳过符号链接项,不实体化。
+    - 限制解压总大小以防 zip bomb。
+
+    Args:
+        zip_ref: 已打开的 :class:`zipfile.ZipFile`。
+        dest_path: 解压目标目录。
+        max_total_size: 解压后总字节上限,默认 512MB。
 
     Raises:
-        ValueError: If unsafe members or size limit exceeded.
+        ValueError: 出现不安全成员、解压越界或超限时抛出。
     """
     dest_root = dest_path.resolve()
     total_written = 0
@@ -123,16 +128,19 @@ def safe_extract_skill_archive(
 
 
 def _is_script_support_file(rel_path: Path) -> bool:
+    """判断相对路径是否为 ``scripts/`` 下的可执行支持文件。"""
     return bool(rel_path.parts) and rel_path.parts[0] == "scripts"
 
 
 def _should_scan_support_file(rel_path: Path) -> bool:
+    """判断相对路径是否需要进入安全扫描(scripts 全部,references/templates 中的提示输入文件)。"""
     if _is_script_support_file(rel_path):
         return True
     return bool(rel_path.parts) and rel_path.parts[0] in _PROMPT_INPUT_DIRS and rel_path.suffix.lower() in _PROMPT_INPUT_SUFFIXES
 
 
 def _move_staged_skill_into_reserved_target(staging_target: Path, target: Path) -> None:
+    """把已就绪的技能从暂存目录原子移动到保留的目标目录,失败时回滚。"""
     installed = False
     reserved = False
     try:
@@ -150,6 +158,7 @@ def _move_staged_skill_into_reserved_target(staging_target: Path, target: Path) 
 
 
 async def _scan_skill_file_or_raise(skill_dir: Path, path: Path, skill_name: str, *, executable: bool) -> None:
+    """对单个文件运行安全扫描,扫描结果不符合策略时抛 :class:`SkillSecurityScanError`。"""
     rel_path = path.relative_to(skill_dir).as_posix()
     location = f"{skill_name}/{rel_path}"
     try:
@@ -175,7 +184,7 @@ async def _scan_skill_file_or_raise(skill_dir: Path, path: Path, skill_name: str
 
 
 async def _scan_skill_archive_contents_or_raise(skill_dir: Path, skill_name: str) -> None:
-    """Run the skill security scanner against all installable text and script files."""
+    """对压缩包内所有可安装文本/脚本文件运行安全扫描。"""
     skill_md = skill_dir / "SKILL.md"
     await _scan_skill_file_or_raise(skill_dir, skill_md, skill_name, executable=False)
 
@@ -195,6 +204,7 @@ async def _scan_skill_archive_contents_or_raise(skill_dir: Path, skill_name: str
 
 
 def _run_async_install(coro):
+    """在已有事件循环中通过线程池执行异步安装逻辑,否则直接 asyncio.run。"""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

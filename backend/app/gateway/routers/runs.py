@@ -1,8 +1,7 @@
-"""Stateless runs endpoints -- stream and wait without a pre-existing thread.
+"""无状态的 runs 端点——在不预先创建线程的情况下进行流式或阻塞式调用。
 
-These endpoints auto-create a temporary thread when no ``thread_id`` is
-supplied in the request body.  When a ``thread_id`` **is** provided, it
-is reused so that conversation history is preserved across calls.
+当请求体中没有提供 ``thread_id`` 时，这些端点会自动创建一个临时线程。
+当请求体中提供了 ``thread_id`` 时，则会复用该线程，使跨调用的会话历史得以保留。
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 
 def _resolve_thread_id(body: RunCreateRequest) -> str:
-    """Return the thread_id from the request body, or generate a new one."""
+    """从请求体中取出 ``thread_id``，若不存在则生成一个新的。"""
     thread_id = (body.config or {}).get("configurable", {}).get("thread_id")
     if thread_id:
         return str(thread_id)
@@ -34,11 +33,10 @@ def _resolve_thread_id(body: RunCreateRequest) -> str:
 
 @router.post("/stream")
 async def stateless_stream(body: RunCreateRequest, request: Request) -> StreamingResponse:
-    """Create a run and stream events via SSE.
+    """创建一个运行并通过 SSE 流式返回事件。
 
-    If ``config.configurable.thread_id`` is provided, the run is created
-    on the given thread so that conversation history is preserved.
-    Otherwise a new temporary thread is created.
+    如果请求中提供了 ``config.configurable.thread_id``，则在该线程上创建运行，
+    以便保留会话历史。否则会创建一个新的临时线程。
     """
     thread_id = _resolve_thread_id(body)
     bridge = get_stream_bridge(request)
@@ -59,11 +57,10 @@ async def stateless_stream(body: RunCreateRequest, request: Request) -> Streamin
 
 @router.post("/wait", response_model=dict)
 async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
-    """Create a run and block until completion.
+    """创建一个运行并阻塞等待其完成。
 
-    If ``config.configurable.thread_id`` is provided, the run is created
-    on the given thread so that conversation history is preserved.
-    Otherwise a new temporary thread is created.
+    如果请求中提供了 ``config.configurable.thread_id``，则在该线程上创建运行，
+    以便保留会话历史。否则会创建一个新的临时线程。
     """
     thread_id = _resolve_thread_id(body)
     bridge = get_stream_bridge(request)
@@ -95,7 +92,7 @@ async def stateless_wait(body: RunCreateRequest, request: Request) -> dict:
 
 
 async def _resolve_run(run_id: str, request: Request) -> dict:
-    """Fetch run by run_id with user ownership check. Raises 404 if not found."""
+    """按 ``run_id`` 拉取运行记录并执行用户归属校验。不存在时抛出 404。"""
     run_store = get_run_store(request)
     record = await run_store.get(run_id)  # user_id=AUTO filters by contextvar
     if record is None:
@@ -112,14 +109,14 @@ async def run_messages(
     before_seq: int | None = Query(default=None),
     after_seq: int | None = Query(default=None),
 ) -> dict:
-    """Return paginated messages for a run (cursor-based).
+    """返回某次运行的分页消息（基于游标）。
 
-    Pagination:
-    - after_seq: messages with seq > after_seq (forward)
-    - before_seq: messages with seq < before_seq (backward)
-    - neither: latest messages
+    分页规则：
+    - ``after_seq``：获取 ``seq > after_seq`` 的消息（向前翻页）
+    - ``before_seq``：获取 ``seq < before_seq`` 的消息（向后翻页）
+    - 两者都未提供：取最新的消息
 
-    Response: { data: [...], has_more: bool }
+    响应格式：``{ data: [...], has_more: bool }``
     """
     run = await _resolve_run(run_id, request)
     event_store = get_run_event_store(request)
@@ -137,7 +134,7 @@ async def run_messages(
 @router.get("/{run_id}/feedback")
 @require_permission("runs", "read")
 async def run_feedback(run_id: str, request: Request) -> list[dict]:
-    """Return all feedback for a run."""
+    """返回某次运行的所有反馈。"""
     run = await _resolve_run(run_id, request)
     feedback_repo = get_feedback_repo(request)
     return await feedback_repo.list_by_run(run["thread_id"], run_id)

@@ -1,3 +1,5 @@
+"""工具运行时的类型定义,集中供各 DeerFlow 工具复用。"""
+
 from typing import Any
 
 from langchain.tools import ToolRuntime

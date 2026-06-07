@@ -1,8 +1,8 @@
-"""Alembic environment for DeerFlow application tables.
+"""DeerFlow 应用表的 Alembic 迁移环境。
 
-ONLY manages DeerFlow's tables (runs, threads_meta, cron_jobs, users).
-LangGraph's checkpointer tables are managed by LangGraph itself -- they
-have their own schema lifecycle and must not be touched by Alembic.
+本模块**只**管理 DeerFlow 自己的表(runs、threads_meta、cron_jobs、
+users 等)。LangGraph checkpointer 的表由 LangGraph 自行管理——它们
+有独立的 schema 生命周期,Alembic 不得触碰。
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    """离线模式：仅生成 SQL 脚本而不连接数据库。"""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -45,6 +46,7 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection):
+    """在线模式：在已有数据库连接上执行迁移。"""
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -55,6 +57,7 @@ def do_run_migrations(connection):
 
 
 async def run_migrations_online() -> None:
+    """在线模式：创建异步 engine，连接数据库后运行迁移。"""
     connectable = create_async_engine(config.get_main_option("sqlalchemy.url"))
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

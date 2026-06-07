@@ -1,7 +1,7 @@
-"""SQLAlchemy-backed RunEventStore implementation.
+"""基于 SQLAlchemy 的 ``RunEventStore`` 实现。
 
-Persists events to the ``run_events`` table. Trace content is truncated
-at ``max_trace_content`` bytes to avoid bloating the database.
+将事件持久化到 ``run_events`` 表，trace 内容在 ``max_trace_content`` 字节
+处截断，避免数据库膨胀。
 """
 
 from __future__ import annotations
@@ -23,12 +23,21 @@ logger = logging.getLogger(__name__)
 
 
 class DbRunEventStore(RunEventStore):
+    """基于 SQLAlchemy 的 :class:`RunEventStore` 实现，支持多线程与多进程。"""
+
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], *, max_trace_content: int = 10240):
+        """构造 DbRunEventStore。
+
+        Args:
+            session_factory: 异步 SQLAlchemy ``async_sessionmaker``。
+            max_trace_content: trace 类别内容的最大字节数（默认 10 KiB）。
+        """
         self._sf = session_factory
         self._max_trace_content = max_trace_content
 
     @staticmethod
     def _row_to_dict(row: RunEventRow) -> dict:
+        """把 SQLAlchemy 行转为对外 dict，并尽量恢复原始结构化内容。"""
         d = row.to_dict()
         d["metadata"] = d.pop("event_metadata", {})
         val = d.get("created_at")
@@ -50,6 +59,7 @@ class DbRunEventStore(RunEventStore):
         return d
 
     def _truncate_trace(self, category: str, content: Any, metadata: dict | None) -> tuple[Any, dict]:
+        """对 ``category == "trace"`` 的事件内容按字节数截断并打标记。"""
         if category == "trace":
             text = content if isinstance(content, str) else json.dumps(content, default=str, ensure_ascii=False)
             encoded = text.encode("utf-8")
@@ -61,6 +71,7 @@ class DbRunEventStore(RunEventStore):
 
     @staticmethod
     def _content_to_db(content: Any, metadata: dict | None) -> tuple[str, dict]:
+        """把结构化内容序列化为 ``content`` 字符串，并在 metadata 中记录。"""
         metadata = metadata or {}
         if isinstance(content, str):
             return content, metadata
@@ -73,30 +84,27 @@ class DbRunEventStore(RunEventStore):
 
     @staticmethod
     def _user_id_from_context() -> str | None:
-        """Soft read of user_id from contextvar for write paths.
+        """软读 ContextVar 中的 ``user_id``，供写路径使用。
 
-        Returns ``None`` (no filter / no stamp) if contextvar is unset,
-        which is the expected case for background worker writes. HTTP
-        request writes will have the contextvar set by auth middleware
-        and get their user_id stamped automatically.
+        若 ContextVar 未设置则返回 ``None``（不过滤 / 不打标）——后台工作
+        线程的写入预期如此。HTTP 请求的写入由认证中间件设置 ContextVar，
+        会自动打上 user_id 标。
 
-        Coerces ``user.id`` to ``str`` at the boundary: ``User.id`` is
-        typed as ``UUID`` by the auth layer, but ``run_events.user_id``
-        is ``VARCHAR(64)`` and aiosqlite cannot bind a raw UUID object
-        to a VARCHAR column ("type 'UUID' is not supported") — the
-        INSERT would silently roll back and the worker would hang.
+        在边界处将 ``user.id`` 强制转为 ``str``：认证层将 ``User.id`` 声明为
+        ``UUID``，但 ``run_events.user_id`` 是 ``VARCHAR(64)``，aiosqlite
+        无法将裸的 UUID 绑定到 VARCHAR 列（“type 'UUID' is not supported”），
+        INSERT 会静默回滚并导致 worker 挂起。
         """
         user = get_current_user()
         return str(user.id) if user is not None else None
 
     @staticmethod
     async def _max_seq_for_thread(session: AsyncSession, thread_id: str) -> int | None:
-        """Return the current max seq while serializing writers per thread.
+        """在按线程串行化写者的同时返回当前最大的 ``seq``。
 
-        PostgreSQL rejects ``SELECT max(...) FOR UPDATE`` because aggregate
-        results are not lockable rows. As a release-safe workaround, take a
-        transaction-level advisory lock keyed by thread_id before reading the
-        aggregate. Other dialects keep the existing row-locking statement.
+        PostgreSQL 拒绝 ``SELECT max(...) FOR UPDATE``，因为聚合结果不可加
+        行锁。出于发布安全考虑，读取聚合值前先获取以 thread_id 为键的
+        事务级 advisory lock。其他方言则保留既有的行锁语句。
         """
         stmt = select(func.max(RunEventRow.seq)).where(RunEventRow.thread_id == thread_id)
         bind = session.get_bind()
@@ -112,13 +120,12 @@ class DbRunEventStore(RunEventStore):
         return await session.scalar(stmt.with_for_update())
 
     async def put(self, *, thread_id, run_id, event_type, category, content="", metadata=None, created_at=None):  # noqa: D401
-        """Write a single event — low-frequency path only.
+        """写入单条事件（仅供低频路径使用）。
 
-        This opens a dedicated transaction with a FOR UPDATE lock to
-        assign a monotonic *seq*.  For high-throughput writes use
-        :meth:`put_batch`, which acquires the lock once for the whole
-        batch.  Currently the only caller is ``worker.run_agent`` for
-        the initial ``human_message`` event (once per run).
+        每次调用都会开独立事务并通过 ``FOR UPDATE`` 加锁以分配单调
+        ``seq``。高频写入请改用 :meth:`put_batch`（整批只加一次锁）。
+        当前的唯一调用方是 ``worker.run_agent`` 写入 ``human_message``
+        事件（每个 Run 仅一次）。
         """
         content, metadata = self._truncate_trace(category, content, metadata)
         db_content, metadata = self._content_to_db(content, metadata)
@@ -142,6 +149,7 @@ class DbRunEventStore(RunEventStore):
             return self._row_to_dict(row)
 
     async def put_batch(self, events):
+        """批量写入事件，整批只加一次 ``seq`` 锁。"""
         if not events:
             return []
         thread_ids = {e["thread_id"] for e in events}
@@ -186,6 +194,7 @@ class DbRunEventStore(RunEventStore):
         after_seq=None,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """返回线程下 ``category=message`` 的消息，支持双向游标分页。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.list_messages")
         stmt = select(RunEventRow).where(RunEventRow.thread_id == thread_id, RunEventRow.category == "message")
         if resolved_user_id is not None:
@@ -218,6 +227,7 @@ class DbRunEventStore(RunEventStore):
         limit=500,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """返回指定 Run 的全部事件，可选按 ``event_types`` 过滤。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.list_events")
         stmt = select(RunEventRow).where(RunEventRow.thread_id == thread_id, RunEventRow.run_id == run_id)
         if resolved_user_id is not None:
@@ -239,6 +249,7 @@ class DbRunEventStore(RunEventStore):
         after_seq=None,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """返回指定 Run 下的 ``category=message`` 消息，支持双向游标分页。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.list_messages_by_run")
         stmt = select(RunEventRow).where(
             RunEventRow.thread_id == thread_id,
@@ -270,6 +281,7 @@ class DbRunEventStore(RunEventStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """统计线程下 ``category=message`` 的消息数。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.count_messages")
         stmt = select(func.count()).select_from(RunEventRow).where(RunEventRow.thread_id == thread_id, RunEventRow.category == "message")
         if resolved_user_id is not None:
@@ -283,6 +295,7 @@ class DbRunEventStore(RunEventStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """删除线程的全部事件，返回被删除的事件数。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.delete_by_thread")
         async with self._sf() as session:
             count_conditions = [RunEventRow.thread_id == thread_id]
@@ -302,6 +315,7 @@ class DbRunEventStore(RunEventStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
+        """删除指定 Run 的全部事件，返回被删除的事件数。"""
         resolved_user_id = resolve_user_id(user_id, method_name="DbRunEventStore.delete_by_run")
         async with self._sf() as session:
             count_conditions = [RunEventRow.thread_id == thread_id, RunEventRow.run_id == run_id]

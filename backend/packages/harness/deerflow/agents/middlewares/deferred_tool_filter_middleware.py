@@ -1,16 +1,11 @@
-"""Middleware to filter deferred tool schemas from model binding.
+"""用于从模型绑定中过滤延迟 tool schema 的中间件。
 
-When tool_search is enabled, MCP tools are still passed to ToolNode for
-execution, but their schemas must NOT be sent to the LLM via bind_tools until
-the model has discovered them via tool_search. This middleware removes the
-still-deferred tools from request.tools before model binding, and blocks tool
-calls to tools that have not been promoted yet.
-
-The deferred name set and the catalog hash are injected at construction time
-(no ContextVar). Promotion state is read from graph state (``state["promoted"]``),
-scoped by catalog hash so a stale persisted promotion cannot expose a renamed
-or drifted tool.
+    当启用 ``tool_search`` 时，MCP 工具仍会传递给 ToolNode 用于执行，
+    但在模型通过 ``tool_search`` 发现它们之前，其 schema *不应* 通过
+    ``bind_tools`` 发送给 LLM。该中间件会把仍处于延迟状态的 schema
+    从模型绑定中移除，使模型只能在显式发现后才能调用它们。
 """
+
 
 import logging
 from collections.abc import Awaitable, Callable
@@ -27,28 +22,37 @@ logger = logging.getLogger(__name__)
 
 
 class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
-    """Hide deferred tool schemas from the bound model until promoted.
+    """在工具被提升前，对绑定到模型的 schema 进行隐藏。
 
-    ToolNode still holds all tools (including deferred) for execution routing,
-    but the LLM only sees active tool schemas plus tools that have already been
-    promoted (recorded in ``state["promoted"]`` under the current catalog hash).
+    ``ToolNode`` 仍保留所有工具（含延迟工具）用于执行路由，但 LLM 仅能看到
+    活跃工具的 schema 以及在当前目录哈希下已被提升的工具（记录于
+    ``state["promoted"]``）。
     """
 
     def __init__(self, deferred_names: frozenset[str], catalog_hash: str | None):
+        """初始化延迟工具过滤中间件。
+
+        Args:
+            deferred_names: 延迟工具名集合。
+            catalog_hash: 当前工具目录哈希，用于作用域控制。
+        """
         super().__init__()
         self._deferred = deferred_names
         self._catalog_hash = catalog_hash
 
     def _promoted(self, state) -> set[str]:
+        """根据 state 解析当前已被提升的工具名集合。"""
         promoted = (state or {}).get("promoted")
         if promoted and promoted.get("catalog_hash") == self._catalog_hash:
             return set(promoted.get("names") or [])
         return set()
 
     def _hidden(self, state) -> set[str]:
+        """返回当前仍需对模型隐藏的延迟工具名集合。"""
         return set(self._deferred) - self._promoted(state)
 
     def _filter_tools(self, request: ModelRequest) -> ModelRequest:
+        """从请求中过滤掉需隐藏的延迟工具，再交给后续 handler。"""
         if not self._deferred:
             return request
         hide = self._hidden(request.state)
@@ -60,6 +64,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         return request.override(tools=active)
 
     def _blocked_tool_message(self, request: ToolCallRequest) -> ToolMessage | None:
+        """若工具调用指向未提升的延迟工具，则返回错误 ToolMessage。"""
         if not self._deferred:
             return None
         name = str(request.tool_call.get("name") or "")
@@ -79,6 +84,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
+        """同步入口：拦截模型调用，必要时修改 ``request`` 后调用 ``handler``。"""
         return handler(self._filter_tools(request))
 
     @override
@@ -87,6 +93,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
+        """同步入口：拦截工具调用，按需修改 ``request`` 后调用 ``handler``。"""
         blocked = self._blocked_tool_message(request)
         if blocked is not None:
             return blocked
@@ -98,6 +105,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
+        """异步入口：拦截模型调用，必要时修改 ``request`` 后 ``await handler``。"""
         return await handler(self._filter_tools(request))
 
     @override
@@ -106,6 +114,7 @@ class DeferredToolFilterMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
+        """异步入口：拦截工具调用，按需修改 ``request`` 后 ``await handler``。"""
         blocked = self._blocked_tool_message(request)
         if blocked is not None:
             return blocked

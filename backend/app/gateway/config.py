@@ -1,10 +1,16 @@
+"""Gateway 服务的配置管理。
+
+从环境变量读取 ``GATEWAY_HOST``、``GATEWAY_PORT``、``GATEWAY_ENABLE_DOCS`` 等，
+构造并缓存全局 ``GatewayConfig`` 单例。
+"""
+
 import os
 
 from pydantic import BaseModel, Field
 
 
 class GatewayConfig(BaseModel):
-    """Configuration for the API Gateway."""
+    """Gateway 服务的配置。"""
 
     host: str = Field(default="0.0.0.0", description="Host to bind the gateway server")
     port: int = Field(default=8001, description="Port to bind the gateway server")
@@ -15,7 +21,7 @@ _gateway_config: GatewayConfig | None = None
 
 
 def get_gateway_config() -> GatewayConfig:
-    """Get gateway config, loading from environment if available."""
+    """获取全局 ``GatewayConfig`` 单例，首次调用时从环境变量解析。"""
     global _gateway_config
     if _gateway_config is None:
         _gateway_config = GatewayConfig(

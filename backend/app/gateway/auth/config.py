@@ -1,4 +1,4 @@
-"""Authentication configuration for DeerFlow."""
+"""DeerFlow 的认证配置。"""
 
 import logging
 import os
@@ -12,17 +12,16 @@ _SECRET_FILE = ".jwt_secret"
 
 
 class AuthConfig(BaseModel):
-    """JWT and auth-related configuration. Parsed once at startup.
+    """JWT 与认证相关配置，启动时仅解析一次。
 
-    Note: the ``users`` table now lives in the shared persistence
-    database managed by ``deerflow.persistence.engine``. The old
-    ``users_db_path`` config key has been removed — user storage is
-    configured through ``config.database`` like every other table.
+    注意：``users`` 表现在归 ``deerflow.persistence.engine`` 统一管理的
+    共享持久化数据库。旧的 ``users_db_path`` 配置项已被移除——用户存储
+    与其它表一样，通过 ``config.database`` 进行配置。
     """
 
     jwt_secret: str = Field(
         ...,
-        description="Secret key for JWT signing. MUST be set via AUTH_JWT_SECRET.",
+        description="JWT 签名密钥。必须通过 ``AUTH_JWT_SECRET`` 设置。",
     )
     token_expiry_days: int = Field(default=7, ge=1, le=30)
     oauth_github_client_id: str | None = Field(default=None)
@@ -33,7 +32,12 @@ _auth_config: AuthConfig | None = None
 
 
 def _load_or_create_secret() -> str:
-    """Load persisted JWT secret from ``{base_dir}/.jwt_secret``, or generate and persist a new one."""
+    """从 ``{base_dir}/.jwt_secret`` 加载已持久化的 JWT 密钥；不存在则生成并写入。
+
+    Raises:
+        RuntimeError: 读取或持久化密钥失败时抛出（提示用户设置 ``AUTH_JWT_SECRET``
+            或修复 ``DEER_FLOW_HOME`` / base 目录的权限）。
+    """
     from deerflow.config.paths import get_paths
 
     paths = get_paths()
@@ -59,7 +63,7 @@ def _load_or_create_secret() -> str:
 
 
 def get_auth_config() -> AuthConfig:
-    """Get the global AuthConfig instance. Parses from env on first call."""
+    """获取全局 ``AuthConfig`` 单例。首次调用时从环境变量解析。"""
     global _auth_config
     if _auth_config is None:
         from dotenv import load_dotenv
@@ -80,6 +84,6 @@ def get_auth_config() -> AuthConfig:
 
 
 def set_auth_config(config: AuthConfig) -> None:
-    """Set the global AuthConfig instance (for testing)."""
+    """设置全局 ``AuthConfig`` 单例（仅供测试使用）。"""
     global _auth_config
     _auth_config = config

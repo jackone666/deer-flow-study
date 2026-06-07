@@ -1,11 +1,10 @@
-"""Assistants compatibility endpoints.
+"""Assistant 兼容端点。
 
-Provides LangGraph Platform-compatible assistants API backed by the
-``langgraph.json`` graph registry and ``config.yaml`` agent definitions.
-
-This is a minimal stub that satisfies the ``useStream`` React hook's
-initialization requirements (``assistants.search()`` and ``assistants.get()``).
+    提供与 LangGraph Platform 兼容的 assistants API，基于 ``langgraph.json``/``langgraph_api``
+    模式实现。供仍依赖原始 OpenAI Assistants / LangGraph Platform 形态的客户端
+    （例如旧版 LangGraph Studio）使用。
 """
+
 
 from __future__ import annotations
 
@@ -21,6 +20,8 @@ router = APIRouter(prefix="/api/assistants", tags=["assistants-compat"])
 
 
 class AssistantResponse(BaseModel):
+    """LangGraph 兼容的 Assistant 响应模型。"""
+
     assistant_id: str
     graph_id: str
     name: str
@@ -33,6 +34,8 @@ class AssistantResponse(BaseModel):
 
 
 class AssistantSearchRequest(BaseModel):
+    """Assistant 搜索请求体。"""
+
     graph_id: str | None = None
     name: str | None = None
     metadata: dict[str, Any] | None = None
@@ -41,7 +44,8 @@ class AssistantSearchRequest(BaseModel):
 
 
 def _get_default_assistant() -> AssistantResponse:
-    """Return the default lead_agent assistant."""
+    """返回默认的 lead_agent assistant。"""
+
     now = datetime.now(UTC).isoformat()
     return AssistantResponse(
         assistant_id="lead_agent",
@@ -57,7 +61,8 @@ def _get_default_assistant() -> AssistantResponse:
 
 
 def _list_assistants() -> list[AssistantResponse]:
-    """List all available assistants from config."""
+    """从配置中列出所有可用的 assistants。"""
+
     assistants = [_get_default_assistant()]
 
     # Also include custom agents from config.yaml agents directory
@@ -87,10 +92,11 @@ def _list_assistants() -> list[AssistantResponse]:
 
 @router.post("/search", response_model=list[AssistantResponse])
 async def search_assistants(body: AssistantSearchRequest | None = None) -> list[AssistantResponse]:
-    """Search assistants.
-
-    Returns all registered assistants (lead_agent + custom agents from config).
+    """搜索 assistants。
+    
+            返回所有已注册的 assistants（lead_agent + 配置中的自定义 agent）。
     """
+
     assistants = _list_assistants()
 
     if body and body.graph_id:
@@ -105,7 +111,8 @@ async def search_assistants(body: AssistantSearchRequest | None = None) -> list[
 
 @router.get("/{assistant_id}", response_model=AssistantResponse)
 async def get_assistant_compat(assistant_id: str) -> AssistantResponse:
-    """Get an assistant by ID."""
+    """通过 ID 获取 assistant。"""
+
     for a in _list_assistants():
         if a.assistant_id == assistant_id:
             return a
@@ -114,11 +121,12 @@ async def get_assistant_compat(assistant_id: str) -> AssistantResponse:
 
 @router.get("/{assistant_id}/graph")
 async def get_assistant_graph(assistant_id: str) -> dict:
-    """Get the graph structure for an assistant.
-
-    Returns a minimal graph description. Full graph introspection is
-    not supported in the Gateway — this stub satisfies SDK validation.
+    """获取 assistant 的图结构。
+    
+            返回最小的图描述。Gateway 不支持完整的图自省——
+            这是一个为兼容性保留的桩。
     """
+
     found = any(a.assistant_id == assistant_id for a in _list_assistants())
     if not found:
         raise HTTPException(status_code=404, detail=f"Assistant {assistant_id} not found")
@@ -132,10 +140,11 @@ async def get_assistant_graph(assistant_id: str) -> dict:
 
 @router.get("/{assistant_id}/schemas")
 async def get_assistant_schemas(assistant_id: str) -> dict:
-    """Get JSON schemas for an assistant's input/output/state.
-
-    Returns empty schemas — full introspection not supported in Gateway.
+    """获取 assistant 的输入/输出/状态 JSON schema。
+    
+            返回空 schema——Gateway 不支持完整自省。
     """
+
     found = any(a.assistant_id == assistant_id for a in _list_assistants())
     if not found:
         raise HTTPException(status_code=404, detail=f"Assistant {assistant_id} not found")

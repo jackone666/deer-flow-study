@@ -1,4 +1,5 @@
-"""Middleware for intercepting clarification requests and presenting them to the user."""
+"""拦截澄清请求并将其呈现给用户的中间件。"""
+
 
 import json
 import logging
@@ -17,52 +18,52 @@ logger = logging.getLogger(__name__)
 
 
 class ClarificationMiddlewareState(AgentState):
-    """Compatible with the `ThreadState` schema."""
+    """与 ``ThreadState`` 模式兼容的状态类型。"""
 
     pass
 
 
 class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
-    """Intercepts clarification tool calls and interrupts execution to present questions to the user.
+    """拦截澄清请求并中断执行以向用户呈现问题。
 
-    When the model calls the `ask_clarification` tool, this middleware:
-    1. Intercepts the tool call before execution
-    2. Extracts the clarification question and metadata
-    3. Formats a user-friendly message
-    4. Returns a Command that interrupts execution and presents the question
-    5. Waits for user response before continuing
+    当模型调用 ``ask_clarification`` 工具时，该中间件会：
+    1. 在执行前拦截该工具调用；
+    2. 提取澄清问题与元数据；
+    3. 格式化为用户友好的消息；
+    4. 返回一个 ``Command`` 中断执行并展示问题；
+    5. 等待用户响应后继续。
 
-    This replaces the tool-based approach where clarification continued the conversation flow.
+    该中间件替代了原本在工具内部继续对话流的处理方式。
     """
 
     state_schema = ClarificationMiddlewareState
 
     def _stable_message_id(self, tool_call_id: str, formatted_message: str) -> str:
-        """Build a deterministic message ID so retried clarification calls replace, not append."""
+        """生成确定性的消息 ID，使重试的澄清调用能够替换而非追加。"""
         if tool_call_id:
             return f"clarification:{tool_call_id}"
         digest = sha256(formatted_message.encode("utf-8")).hexdigest()[:16]
         return f"clarification:{digest}"
 
     def _is_chinese(self, text: str) -> bool:
-        """Check if text contains Chinese characters.
+        """检查文本是否包含中文字符。
 
         Args:
-            text: Text to check
+            text: 待检查的文本。
 
         Returns:
-            True if text contains Chinese characters
+            包含中文字符时返回 ``True``。
         """
         return any("\u4e00" <= char <= "\u9fff" for char in text)
 
     def _format_clarification_message(self, args: dict) -> str:
-        """Format the clarification arguments into a user-friendly message.
+        """将澄清参数格式化为用户友好的消息。
 
         Args:
-            args: The tool call arguments containing clarification details
+            args: 包含澄清详情的工具调用参数字典。
 
         Returns:
-            Formatted message string
+            格式化后的消息字符串。
         """
         question = args.get("question", "")
         clarification_type = args.get("clarification_type", "missing_info")
@@ -115,13 +116,13 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         return "\n".join(message_parts)
 
     def _handle_clarification(self, request: ToolCallRequest) -> Command:
-        """Handle clarification request and return command to interrupt execution.
+        """处理澄清请求并返回中断执行的 Command。
 
         Args:
-            request: Tool call request
+            request: 工具调用请求。
 
         Returns:
-            Command that interrupts execution with the formatted clarification message
+            使用格式化后的澄清消息中断执行的 ``Command``。
         """
         # Extract clarification arguments
         args = request.tool_call.get("args", {})
@@ -161,14 +162,14 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        """Intercept ask_clarification tool calls and interrupt execution (sync version).
+        """拦截 ``ask_clarification`` 工具调用并中断执行（同步版本）。
 
         Args:
-            request: Tool call request
-            handler: Original tool execution handler
+            request: 工具调用请求。
+            handler: 原始工具执行处理器。
 
         Returns:
-            Command that interrupts execution with the formatted clarification message
+            使用格式化后的澄清消息中断执行的 ``Command``。
         """
         # Check if this is an ask_clarification tool call
         if request.tool_call.get("name") != "ask_clarification":
@@ -183,14 +184,14 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        """Intercept ask_clarification tool calls and interrupt execution (async version).
+        """拦截 ``ask_clarification`` 工具调用并中断执行（异步版本）。
 
         Args:
-            request: Tool call request
-            handler: Original tool execution handler (async)
+            request: 工具调用请求。
+            handler: 原始工具执行处理器（异步）。
 
         Returns:
-            Command that interrupts execution with the formatted clarification message
+            使用格式化后的澄清消息中断执行的 ``Command``。
         """
         # Check if this is an ask_clarification tool call
         if request.tool_call.get("name") != "ask_clarification":

@@ -1,17 +1,17 @@
-"""Langfuse trace-attribute metadata builders.
+"""Langfuse trace 属性元数据构建器。
 
-The Langfuse v4 ``langchain.CallbackHandler`` lifts a fixed set of reserved
-keys from ``RunnableConfig.metadata`` onto the root trace:
+Langfuse v4 的 ``langchain.CallbackHandler`` 会从 ``RunnableConfig.metadata``
+中提取一组固定保留键并挂到根 trace 上：
 
-- ``langfuse_session_id`` → groups traces (LangGraph thread → Langfuse Session)
-- ``langfuse_user_id``    → trace user_id (powers the Users page)
-- ``langfuse_trace_name`` → human-readable trace name
-- ``langfuse_tags``       → trace tags
+- ``langfuse_session_id`` → 把 trace 归入同一个 Session（LangGraph thread → Langfuse Session）
+- ``langfuse_user_id``    → trace 的 user_id（驱动 Users 页面）
+- ``langfuse_trace_name`` → 人类可读的 trace 名称
+- ``langfuse_tags``       → trace 的标签
 
-See ``langfuse/langchain/CallbackHandler.py::_parse_langfuse_trace_attributes``
-and https://langfuse.com/docs/observability/features/sessions for the
-contract. Builders here exist so the gateway/run worker can inject the
-right metadata without leaking Langfuse internals into the call sites.
+具体契约参见 ``langfuse/langchain/CallbackHandler.py::_parse_langfuse_trace_attributes``
+以及 https://langfuse.com/docs/observability/features/sessions 。本模块的
+builder 让 Gateway / run worker 能够注入正确的元数据，而无需在调用方
+泄漏 Langfuse 的内部细节。
 """
 
 from __future__ import annotations
@@ -33,20 +33,22 @@ def build_langfuse_trace_metadata(
     model_name: str | None = None,
     environment: str | None = None,
 ) -> dict[str, Any]:
-    """Return Langfuse trace-attribute metadata for ``RunnableConfig.metadata``.
+    """为 ``RunnableConfig.metadata`` 构造 Langfuse trace 属性元数据。
 
-    Returns ``{}`` when Langfuse is not in the enabled tracing providers so
-    callers can unconditionally merge the result without affecting LangSmith
-    or other tracers.
+    当 Langfuse 未在已启用的 tracing providers 中时返回 ``{}``，调用方
+    可无脑合并而不会影响 LangSmith 等其他 tracer。
 
     Args:
-        thread_id: LangGraph thread id; mapped to ``langfuse_session_id``.
-        user_id: Effective user id; falls back to ``DEFAULT_USER_ID`` when
-            ``None`` so the Langfuse Users page works in no-auth mode.
-        assistant_id: Optional agent identifier; defaults to ``"lead-agent"``.
-        model_name: Model name; emitted as ``model:<name>`` in ``langfuse_tags``.
-        environment: Deployment env (e.g. ``"production"``); emitted as
-            ``env:<value>`` in ``langfuse_tags``.
+        thread_id: LangGraph 线程 ID，映射到 ``langfuse_session_id``。
+        user_id: 实际生效的用户 ID；为 ``None`` 时回退到 ``DEFAULT_USER_ID``，
+            以保证 Langfuse Users 页面在无鉴权模式下也能正常工作。
+        assistant_id: 可选的 agent 标识；缺省为 ``"lead-agent"``。
+        model_name: 模型名称，会以 ``model:<name>`` 的形式写入 ``langfuse_tags``。
+        environment: 部署环境（如 ``"production"``），会以 ``env:<value>``
+            的形式写入 ``langfuse_tags``。
+
+    Returns:
+        包含 Langfuse 保留键的元数据字典；若 Langfuse 未启用则为空字典。
     """
     if "langfuse" not in get_enabled_tracing_providers():
         return {}
@@ -79,15 +81,22 @@ def inject_langfuse_metadata(
     model_name: str | None = None,
     environment: str | None = None,
 ) -> None:
-    """Merge Langfuse trace-attribute metadata into ``config["metadata"]``.
+    """将 Langfuse trace 属性元数据合并到 ``config["metadata"]`` 中。
 
-    Shared by the gateway worker (``runtime/runs/worker.py``) and the
-    embedded client (``client.py``) so the two paths cannot drift apart.
+    Gateway worker（``runtime/runs/worker.py``）与嵌入式 client
+    （``client.py``）共用该函数，以保证两条链路不会因元数据差异而漂移。
 
-    Caller-supplied metadata wins via ``setdefault`` — an upstream value
-    for e.g. ``langfuse_session_id`` set by the frontend stays untouched.
-    The ``config`` dict is mutated in place; the call is a no-op when
-    Langfuse is not in the enabled tracing providers.
+    通过 ``setdefault`` 实现「调用方先到先得」——例如前端已经写入的
+    ``langfuse_session_id`` 不会被覆盖。``config`` 字典会被原地修改；
+    当 Langfuse 未在已启用的 tracing providers 中时该调用是 no-op。
+
+    Args:
+        config: 待修改的 ``RunnableConfig`` 字典。
+        thread_id: LangGraph 线程 ID，映射到 ``langfuse_session_id``。
+        user_id: 实际生效的用户 ID；为 ``None`` 时回退到 ``DEFAULT_USER_ID``。
+        assistant_id: 可选的 agent 标识；缺省为 ``"lead-agent"``。
+        model_name: 模型名称，会以 ``model:<name>`` 写入 ``langfuse_tags``。
+        environment: 部署环境，会以 ``env:<value>`` 写入 ``langfuse_tags``。
     """
     langfuse_metadata = build_langfuse_trace_metadata(
         thread_id=thread_id,

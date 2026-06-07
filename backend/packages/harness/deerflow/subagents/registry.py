@@ -1,4 +1,4 @@
-"""Subagent registry for managing available subagents."""
+"""子 Agent 注册表:管理可用子 Agent 的查询与覆盖。"""
 
 import logging
 from dataclasses import replace
@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_subagents_app_config(app_config: Any | None = None):
+    """把传入的 ``app_config`` 统一规整为子 Agent 段配置对象。"""
     if app_config is None:
         from deerflow.config.subagents_config import get_subagents_app_config
 
@@ -20,14 +21,14 @@ def _resolve_subagents_app_config(app_config: Any | None = None):
 
 
 def _build_custom_subagent_config(name: str, *, app_config: Any | None = None) -> SubagentConfig | None:
-    """Build a SubagentConfig from config.yaml custom_agents section.
+    """基于 ``config.yaml`` 的 ``custom_agents`` 段构造 :class:`SubagentConfig`。
 
     Args:
-        name: The name of the custom subagent.
-        app_config: Optional AppConfig or SubagentsAppConfig to resolve from.
+        name: 自定义子 Agent 名。
+        app_config: 可选 :class:`AppConfig` 或 :class:`SubagentsAppConfig`,用于解析覆盖。
 
     Returns:
-        SubagentConfig if found in custom_agents, None otherwise.
+        在 ``custom_agents`` 中找到时返回对应 :class:`SubagentConfig`,否则返回 None。
     """
     subagents_config = _resolve_subagents_app_config(app_config)
     custom = subagents_config.custom_agents.get(name)
@@ -48,19 +49,19 @@ def _build_custom_subagent_config(name: str, *, app_config: Any | None = None) -
 
 
 def get_subagent_config(name: str, *, app_config: Any | None = None) -> SubagentConfig | None:
-    """Get a subagent configuration by name, with config.yaml overrides applied.
+    """按名字获取子 Agent 配置,会应用 ``config.yaml`` 覆盖。
 
-    Resolution order (mirrors Codex's config layering):
-    1. Built-in subagents (general-purpose, bash)
-    2. Custom subagents from config.yaml custom_agents section
-    3. Per-agent overrides from config.yaml agents section (timeout, max_turns, model, skills)
+    解析顺序(与 Codex 的配置分层一致):
+    1. 内置子 Agent(``general-purpose``、``bash``)
+    2. ``config.yaml`` 中 ``custom_agents`` 段的自定义子 Agent
+    3. ``config.yaml`` 中 ``agents`` 段的按名覆盖(timeout、max_turns、model、skills)
 
     Args:
-        name: The name of the subagent.
-        app_config: Optional AppConfig or SubagentsAppConfig to resolve overrides from.
+        name: 子 Agent 名。
+        app_config: 可选 :class:`AppConfig` 或 :class:`SubagentsAppConfig`。
 
     Returns:
-        SubagentConfig if found (with any config.yaml overrides applied), None otherwise.
+        应用覆盖后的 :class:`SubagentConfig`;未找到时返回 None。
     """
     # Step 1: Look up built-in, then fall back to custom_agents
     config = BUILTIN_SUBAGENTS.get(name)
@@ -117,10 +118,13 @@ def get_subagent_config(name: str, *, app_config: Any | None = None) -> Subagent
 
 
 def list_subagents(*, app_config: Any | None = None) -> list[SubagentConfig]:
-    """List all available subagent configurations (with config.yaml overrides applied).
+    """列出全部可用子 Agent 配置(已应用 ``config.yaml`` 覆盖)。
+
+    Args:
+        app_config: 可选 :class:`AppConfig` 或 :class:`SubagentsAppConfig`。
 
     Returns:
-        List of all registered SubagentConfig instances (built-in + custom).
+        注册表中所有 :class:`SubagentConfig` 列表(内置 + 自定义)。
     """
     configs = []
     for name in get_subagent_names(app_config=app_config):
@@ -131,10 +135,13 @@ def list_subagents(*, app_config: Any | None = None) -> list[SubagentConfig]:
 
 
 def get_subagent_names(*, app_config: Any | None = None) -> list[str]:
-    """Get all available subagent names (built-in + custom).
+    """获取全部可用子 Agent 名(内置 + 自定义)。
+
+    Args:
+        app_config: 可选 :class:`AppConfig` 或 :class:`SubagentsAppConfig`。
 
     Returns:
-        List of subagent names.
+        子 Agent 名称列表。
     """
     names = list(BUILTIN_SUBAGENTS.keys())
 
@@ -148,10 +155,15 @@ def get_subagent_names(*, app_config: Any | None = None) -> list[str]:
 
 
 def get_available_subagent_names(*, app_config: Any | None = None) -> list[str]:
-    """Get subagent names that should be exposed to the active runtime.
+    """返回当前运行时实际可暴露的子 Agent 名。
+
+    在不允许主机 bash 的环境下会隐藏 ``bash`` 子 Agent。
+
+    Args:
+        app_config: 可选 :class:`AppConfig` 或 :class:`SubagentsAppConfig`。
 
     Returns:
-        List of subagent names visible to the current sandbox configuration.
+        对当前沙箱配置可见的子 Agent 名称列表。
     """
     names = get_subagent_names(app_config=app_config)
     try:

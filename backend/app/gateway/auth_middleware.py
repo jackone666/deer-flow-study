@@ -1,12 +1,11 @@
-"""Global authentication middleware — fail-closed safety net.
+"""全局身份认证中间件——失败关闭的安全兜底。
 
-Rejects unauthenticated requests to non-public paths with 401. When a
-request passes the cookie check, resolves the JWT payload to a real
-``User`` object and stamps it into both ``request.state.user`` and the
-``deerflow.runtime.user_context`` contextvar so that repository-layer
-owner filtering works automatically via the sentinel pattern.
+对非公开路径拒绝未认证的请求并返回 401。当请求通过 cookie 校验后，会将
+JWT 负载解析为真实的 ``User`` 对象，并同时写入 ``request.state.user`` 与
+``deerflow.runtime.user_context`` 上下文变量，使仓库层的归属过滤能够通过
+哨兵模式自动生效。
 
-Fine-grained permission checks remain in authz.py decorators.
+更细粒度的权限检查仍由 ``authz.py`` 中的装饰器负责。
 """
 
 from collections.abc import Callable
@@ -43,6 +42,7 @@ _PUBLIC_EXACT_PATHS: frozenset[str] = frozenset(
 
 
 def _is_public(path: str) -> bool:
+    """判断当前路径是否在白名单中（无需鉴权）。"""
     stripped = path.rstrip("/")
     if stripped in _PUBLIC_EXACT_PATHS:
         return True
@@ -50,29 +50,28 @@ def _is_public(path: str) -> bool:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Strict auth gate: reject requests without a valid session.
+    """严格的认证门：拒绝没有有效会话的请求。
 
-    Two-stage check for non-public paths:
+    对非公开路径执行两阶段校验：
 
-    1. Cookie presence — return 401 NOT_AUTHENTICATED if missing
-    2. JWT validation via ``get_optional_user_from_request`` — return 401
-       TOKEN_INVALID if the token is absent, malformed, expired, or the
-       signed user does not exist / is stale
+    1. Cookie 存在性——缺失时返回 401 ``NOT_AUTHENTICATED``
+    2. 通过 ``get_optional_user_from_request`` 进行 JWT 校验——当 token 缺失、
+       格式错误、已过期或签发用户不存在/已作废时返回 401 ``TOKEN_INVALID``
 
-    On success, stamps ``request.state.user`` and the
-    ``deerflow.runtime.user_context`` contextvar so that repository-layer
-    owner filters work downstream without every route needing a
-    ``@require_auth`` decorator. Routes that need per-resource
-    authorization (e.g. "user A cannot read user B's thread by guessing
-    the URL") should additionally use ``@require_permission(...,
-    owner_check=True)`` for explicit enforcement — but authentication
-    itself is fully handled here.
+    校验通过后，会将用户信息同时写入 ``request.state.user`` 和
+    ``deerflow.runtime.user_context`` 上下文变量，使仓库层的归属过滤
+    可以在下游生效，而不需要每个路由都显式使用 ``@require_auth`` 装饰器。
+    那些需要按资源粒度鉴权（例如"用户 A 不允许靠猜 URL 读取用户 B 的线程"）
+    的路由应当再叠加 ``@require_permission(..., owner_check=True)`` 来
+    显式执行——但身份认证本身完全在本中间件中完成。
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """初始化中间件，保存 ASGI 应用引用。"""
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """处理每个 HTTP 请求：执行鉴权、注入用户上下文，调用下游并清理。"""
         if _is_public(request.url.path):
             return await call_next(request)
 

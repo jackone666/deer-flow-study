@@ -1,10 +1,10 @@
-"""Patched ChatDeepSeek that preserves reasoning_content in multi-turn conversations.
+"""在多轮对话中保留 ``reasoning_content`` 的 ``ChatDeepSeek`` 补丁。
 
-This module provides a patched version of ChatDeepSeek that properly handles
-reasoning_content when sending messages back to the API. The original implementation
-stores reasoning_content in additional_kwargs but doesn't include it when making
-subsequent API calls, which causes errors with APIs that require reasoning_content
-on all assistant messages when thinking mode is enabled.
+本模块提供 :class:`ChatDeepSeek` 的补丁版本，使其在向 API 发送消息时
+能正确处理 ``reasoning_content``。原实现把 ``reasoning_content`` 存放在
+``additional_kwargs`` 中，但发起后续 API 调用时不会带上该字段，导致
+那些在 thinking 启用时要求所有 assistant 消息都必须包含
+``reasoning_content`` 的接口报错。
 """
 
 from typing import Any
@@ -16,20 +16,21 @@ from deerflow.models.assistant_payload_replay import restore_assistant_payloads,
 
 
 class PatchedChatDeepSeek(ChatDeepSeek):
-    """ChatDeepSeek with proper reasoning_content preservation.
+    """``reasoning_content`` 被正确保留的 :class:`ChatDeepSeek`。
 
-    When using thinking/reasoning enabled models, the API expects reasoning_content
-    to be present on ALL assistant messages in multi-turn conversations. This patched
-    version ensures reasoning_content from additional_kwargs is included in the
-    request payload.
+    使用启用 thinking/reasoning 的模型时，API 要求多轮对话中所有
+    assistant 消息都包含 ``reasoning_content``。本补丁版本确保
+    ``additional_kwargs`` 中的 ``reasoning_content`` 被包含进请求负载。
     """
 
     @classmethod
     def is_lc_serializable(cls) -> bool:
+        """声明本类可被 LangChain 序列化。"""
         return True
 
     @property
     def lc_secrets(self) -> dict[str, str]:
+        """声明需要从环境变量读取的密钥字段。"""
         return {"api_key": "DEEPSEEK_API_KEY", "openai_api_key": "DEEPSEEK_API_KEY"}
 
     def _get_request_payload(
@@ -39,15 +40,23 @@ class PatchedChatDeepSeek(ChatDeepSeek):
         stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict:
-        """Get request payload with reasoning_content preserved.
+        """获取保留 ``reasoning_content`` 的请求负载。
 
-        Overrides the parent method to inject reasoning_content from
-        additional_kwargs into assistant messages in the payload.
+        重写父类方法，把 ``additional_kwargs`` 中的 ``reasoning_content``
+        注入到负载中的 assistant 消息。
+
+        Args:
+            input_: LangChain 模型输入。
+            stop: 可选的停止词列表。
+            **kwargs: 透传给父方法的额外参数。
+
+        Returns:
+            dict: 准备发送给 provider 的请求负载。
         """
-        # Get the original messages before conversion
+        # 在转换前获取原始消息
         original_messages = self._convert_input(input_).to_messages()
 
-        # Call parent to get the base payload
+        # 调用父方法得到基础负载
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
 
         restore_assistant_payloads(

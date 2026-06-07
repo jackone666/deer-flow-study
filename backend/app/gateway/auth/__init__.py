@@ -1,9 +1,9 @@
-"""Authentication module for DeerFlow.
+"""DeerFlow 的认证模块。
 
-This module provides:
-- JWT-based authentication
-- Provider Factory pattern for extensible auth methods
-- UserRepository interface for storage backends (SQLite)
+本模块提供：
+- 基于 JWT 的认证
+- Provider 工厂模式，便于扩展多种认证方式
+- 面向存储后端（SQLite）的 ``UserRepository`` 抽象接口
 """
 
 from app.gateway.auth.config import AuthConfig, get_auth_config, set_auth_config

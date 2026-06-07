@@ -1,3 +1,5 @@
+"""技能（Skills）系统配置。"""
+
 import os
 from pathlib import Path
 
@@ -7,43 +9,45 @@ from deerflow.config.runtime_paths import project_root, resolve_path
 
 
 def _legacy_skills_candidates() -> tuple[Path, ...]:
-    """Return source-tree skills locations for monorepo compatibility."""
+    """为 monorepo 兼容而返回源码树中的 skills 候选位置。"""
     backend_dir = Path(__file__).resolve().parents[4]
     repo_root = backend_dir.parent
     return (repo_root / "skills",)
 
 
 class SkillsConfig(BaseModel):
-    """Configuration for skills system"""
+    """技能系统配置。"""
 
     use: str = Field(
         default="deerflow.skills.storage.local_skill_storage:LocalSkillStorage",
-        description="Class path of the SkillStorage implementation.",
+        description="SkillStorage 实现的类路径。",
     )
     path: str | None = Field(
         default=None,
-        description=("Path to skills directory. If not specified, defaults to `skills` under the caller project root, falling back to the legacy repo-root location for monorepo compatibility."),
+        description=("技能目录路径。如未指定，默认为调用方项目根下的 `skills` 目录，并在 monorepo 场景下回退到源码树根的旧位置。"),
     )
     container_path: str = Field(
         default="/mnt/skills",
-        description="Path where skills are mounted in the sandbox container",
+        description="sandbox 容器中挂载 skills 的路径",
     )
 
     def get_skills_path(self) -> Path:
-        """
-        Get the resolved skills directory path.
+        """获取解析后的 skills 目录路径。
 
-        Resolution order:
-            1. Explicit ``path`` field
-            2. ``DEER_FLOW_SKILLS_PATH`` environment variable
-            3. ``skills`` under the caller project root (``project_root()``)
-            4. Legacy repo-root candidates for monorepo compatibility (``_legacy_skills_candidates``)
+        解析顺序：
+            1. 显式 ``path`` 字段
+            2. ``DEER_FLOW_SKILLS_PATH`` 环境变量
+            3. 调用方项目根下的 ``skills`` 目录（``project_root()``）
+            4. 为 monorepo 兼容而存在的源码树根目录候选（``_legacy_skills_candidates``）
 
-        When none of (3) or (4) exist on disk, the project-root default is returned so callers
-        can still surface a stable "no skills" location without raising.
+        当 (3)(4) 在磁盘上都不存在时，仍返回项目根默认路径，
+        以便调用方在没有 skills 时也能拿到一个稳定的占位路径而不会抛错。
+
+        Returns:
+            Path: 解析后的 skills 目录绝对路径。
         """
         if self.path:
-            # Use configured path (can be absolute or relative to project root)
+            # 使用显式配置的路径（绝对路径或相对于项目根）
             return resolve_path(self.path)
         if env_path := os.getenv("DEER_FLOW_SKILLS_PATH"):
             return resolve_path(env_path)
@@ -59,14 +63,13 @@ class SkillsConfig(BaseModel):
         return project_default
 
     def get_skill_container_path(self, skill_name: str, category: str = "public") -> str:
-        """
-        Get the full container path for a specific skill.
+        """获取指定 skill 在容器中的完整路径。
 
         Args:
-            skill_name: Name of the skill (directory name)
-            category: Category of the skill (public or custom)
+            skill_name: skill 名称（目录名）。
+            category: skill 分类（public 或 custom）。
 
         Returns:
-            Full path to the skill in the container
+            str: 容器内指向该 skill 的完整路径。
         """
         return f"{self.container_path}/{category}/{skill_name}"

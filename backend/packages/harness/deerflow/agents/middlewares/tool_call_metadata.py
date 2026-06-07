@@ -1,4 +1,4 @@
-"""Helpers for keeping AIMessage tool-call metadata consistent."""
+"""用于保持 AIMessage 工具调用元数据一致的辅助函数。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 
 def _raw_tool_call_id(raw_tool_call: Any) -> str | None:
+    """内部辅助方法。"""
     if not isinstance(raw_tool_call, dict):
         return None
 
@@ -21,7 +22,7 @@ def clone_ai_message_with_tool_calls(
     *,
     content: Any | None = None,
 ) -> AIMessage:
-    """Clone an AIMessage while keeping raw provider tool-call metadata in sync."""
+    """克隆 AIMessage 并保持原始提供方工具调用元数据同步。"""
     kept_ids = {tc["id"] for tc in tool_calls if isinstance(tc.get("id"), str) and tc["id"]}
 
     update: dict[str, Any] = {"tool_calls": tool_calls}

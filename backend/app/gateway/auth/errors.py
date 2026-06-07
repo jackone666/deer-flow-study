@@ -1,8 +1,8 @@
-"""Typed error definitions for auth module.
+"""认证模块的类型化错误定义。
 
-AuthErrorCode: exhaustive enum of all auth failure conditions.
-TokenError: exhaustive enum of JWT decode failures.
-AuthErrorResponse: structured error payload for HTTP responses.
+- ``AuthErrorCode``：覆盖所有认证失败场景的枚举。
+- ``TokenError``：覆盖所有 JWT 解码失败场景的枚举。
+- ``AuthErrorResponse``：用于 HTTP 响应的结构化错误负载。
 """
 
 from enum import StrEnum
@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 class AuthErrorCode(StrEnum):
-    """Exhaustive list of auth error conditions."""
+    """所有认证失败场景的穷举枚举。"""
 
     INVALID_CREDENTIALS = "invalid_credentials"
     TOKEN_EXPIRED = "token_expired"
@@ -24,7 +24,7 @@ class AuthErrorCode(StrEnum):
 
 
 class TokenError(StrEnum):
-    """Exhaustive list of JWT decode failure reasons."""
+    """所有 JWT 解码失败原因的穷举枚举。"""
 
     EXPIRED = "expired"
     INVALID_SIGNATURE = "invalid_signature"
@@ -32,14 +32,21 @@ class TokenError(StrEnum):
 
 
 class AuthErrorResponse(BaseModel):
-    """Structured error response — replaces bare `detail` strings."""
+    """结构化的错误响应——取代裸的 ``detail`` 字符串。"""
 
     code: AuthErrorCode
     message: str
 
 
 def token_error_to_code(err: TokenError) -> AuthErrorCode:
-    """Map TokenError to AuthErrorCode — single source of truth."""
+    """将 ``TokenError`` 映射到 ``AuthErrorCode``，作为唯一真值源。
+
+    Args:
+        err: JWT 解码失败原因枚举值。
+
+    Returns:
+        AuthErrorCode: 对应的认证错误码。
+    """
     if err == TokenError.EXPIRED:
         return AuthErrorCode.TOKEN_EXPIRED
     return AuthErrorCode.TOKEN_INVALID
