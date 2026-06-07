@@ -60,3 +60,10 @@ config.yaml.bak
 /frontend/playwright-report/
 .gstack/
 .worktrees
+
+# mavis plan 临时目录
+.mavis/
+# opencode 临时 dylib
+.opencode/tmp/
+# 调试临时
+*.tmp
