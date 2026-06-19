@@ -1,13 +1,27 @@
-"""Runtime — 核心运行时上下文。
+"""Runtime 顶层公共 API。
 
-Runtime 是 DeerFlow 中贯穿整个请求生命周期的上下文对象。
-它持有状态、配置、元数据和工具注册信息，供主智能体和各中间件使用。
+本模块作为 ``deerflow.runtime`` 的聚合出口，向 Gateway、测试与客户端代码
+稳定暴露 runs、stream bridge、store、序列化工具以及轻量 Runtime 上下文。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+
+from .runs import (
+    ConflictError,
+    DisconnectMode,
+    RunContext,
+    RunManager,
+    RunRecord,
+    RunStatus,
+    UnsupportedStrategyError,
+    run_agent,
+)
+from .serialization import serialize, serialize_channel_values, serialize_lc_object, serialize_messages_tuple
+from .store import get_store, make_store, reset_store, store_context
+from .stream_bridge import END_SENTINEL, HEARTBEAT_SENTINEL, MemoryStreamBridge, StreamBridge, StreamEvent, make_stream_bridge
 
 
 @dataclass
@@ -75,3 +89,31 @@ def create_agent_runtime(
         context={},
         app_config={},
     )
+
+
+__all__ = [
+    "ConflictError",
+    "DisconnectMode",
+    "END_SENTINEL",
+    "HEARTBEAT_SENTINEL",
+    "MemoryStreamBridge",
+    "RunContext",
+    "RunManager",
+    "RunRecord",
+    "RunStatus",
+    "Runtime",
+    "StreamBridge",
+    "StreamEvent",
+    "UnsupportedStrategyError",
+    "create_agent_runtime",
+    "get_store",
+    "make_store",
+    "make_stream_bridge",
+    "reset_store",
+    "run_agent",
+    "serialize",
+    "serialize_channel_values",
+    "serialize_lc_object",
+    "serialize_messages_tuple",
+    "store_context",
+]
