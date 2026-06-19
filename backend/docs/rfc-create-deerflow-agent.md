@@ -19,7 +19,7 @@ make_lead_agent
 
 ### 对比
 
-| | `langchain.create_agent` | `make_lead_agent` | `DeerFlowClient`（增强后） |
+|  | `langchain.create_agent` | `make_lead_agent` | `DeerFlowClient`（增强后） |
 |---|---|---|---|
 | 定位 | 底层原语 | 内部工厂 | **唯一公开 API** |
 | 配置来源 | 纯参数 | YAML 文件 | **参数优先，config fallback** |
@@ -389,7 +389,7 @@ client = DeerFlowClient(
 
 当前实现中以下 middleware 内部仍读 `config.yaml`，SDK 用户需注意：
 
-| Middleware | 读取内容 | Phase 2 解决方案 |
+| 中间件 | 读取内容 | Phase 2 解决方案 |
 |------------|---------|-----------------|
 | TitleMiddleware | `get_title_config()` + `create_chat_model()` | `TitleOptions(model=...)` 参数覆盖 |
 | MemoryMiddleware | `get_memory_config()` | `MemoryOptions(...)` 参数覆盖 |
@@ -480,7 +480,7 @@ graph TB
 
 主 agent 和 subagent 共享基础 middleware 链（`_build_runtime_middlewares`），subagent 在此基础上做精简：
 
-| Middleware | 主 Agent | Subagent | 说明 |
+| 中间件 | 主 Agent | 子代理 | 说明 |
 |------------|:-------:|:--------:|------|
 | ThreadDataMiddleware | ✓ | ✓ | 共享：创建线程目录 |
 | UploadsMiddleware | ✓ | ✗ | 主 agent 独有：扫描上传文件 |
@@ -488,14 +488,14 @@ graph TB
 | DanglingToolCallMiddleware | ✓ | ✗ | 主 agent 独有：补缺失 ToolMessage |
 | GuardrailMiddleware | ✓ | ✓ | 共享：工具调用授权（可选） |
 | ToolErrorHandlingMiddleware | ✓ | ✓ | 共享：工具异常处理 |
-| SummarizationMiddleware | ✓ | ✗ | |
-| TodoMiddleware | ✓ | ✗ | |
-| TitleMiddleware | ✓ | ✗ | |
-| MemoryMiddleware | ✓ | ✗ | |
-| ViewImageMiddleware | ✓ | ✗ | |
-| SubagentLimitMiddleware | ✓ | ✗ | |
-| LoopDetectionMiddleware | ✓ | ✗ | |
-| ClarificationMiddleware | ✓ | ✗ | |
+| SummarizationMiddleware | ✓ | ✗ |  |
+| TodoMiddleware | ✓ | ✗ |  |
+| TitleMiddleware | ✓ | ✗ |  |
+| MemoryMiddleware | ✓ | ✗ |  |
+| ViewImageMiddleware | ✓ | ✗ |  |
+| SubagentLimitMiddleware | ✓ | ✗ |  |
+| LoopDetectionMiddleware | ✓ | ✗ |  |
+| ClarificationMiddleware | ✓ | ✗ |  |
 
 **设计原则**：
 - `RuntimeFeatures`、`@Next/@Prev`、排序机制只作用于**主 agent**

@@ -1,4 +1,19 @@
-"""记忆存储提供者。"""
+"""记忆存储提供者。
+
+提供两个核心能力：
+1. **抽象存储接口**：``MemoryStorage`` 定义 load/reload/save 契约，支持替换为数据库等后端
+2. **文件存储实现**：``FileMemoryStorage`` 基于 JSON 文件 + mtime 缓存，支持 per-user/per-agent 隔离
+
+路径解析逻辑（``_get_memory_file_path``）：
+
+```
+user_id=None, agent_name=None → {base_dir}/memory.json          （全局记忆）
+user_id="u1",  agent_name=None → {base_dir}/users/u1/memory.json （per-user 记忆）
+user_id=None,  agent_name="a1"→ {base_dir}/agents/a1/memory.json（per-agent 记忆，旧布局）
+user_id="u1",  agent_name="a1"→ {base_dir}/users/u1/agents/a1/memory.json（per-user-agent）
+```
+
+原子写入：先写 ``.tmp`` 文件再 ``replace``，避免写入中途崩溃破坏现有数据。"""
 
 import abc
 import json
@@ -22,7 +37,30 @@ def utc_now_iso_z() -> str:
 
 
 def create_empty_memory() -> dict[str, Any]:
-    """创建一份空白的记忆结构。"""
+    """创建一份空白的记忆结构。
+
+    输出示例：
+    ```python
+    {
+        "version": "1.0",
+        "lastUpdated": "2026-06-08T10:30:00Z",
+        "user": {
+            "workContext":     {"summary": "", "updatedAt": ""},
+            "personalContext": {"summary": "", "updatedAt": ""},
+            "topOfMind":       {"summary": "", "updatedAt": ""},
+        },
+        "history": {
+            "recentMonths":       {"summary": "", "updatedAt": ""},
+            "earlierContext":     {"summary": "", "updatedAt": ""},
+            "longTermBackground": {"summary": "", "updatedAt": ""},
+        },
+        "facts": [],
+    }
+    ```
+
+    Returns:
+        初始化的空记忆字典。
+    """
     return {
         "version": "1.0",
         "lastUpdated": utc_now_iso_z(),
@@ -159,7 +197,30 @@ class FileMemoryStorage(MemoryStorage):
         return memory_data
 
     def save(self, memory_data: dict[str, Any], agent_name: str | None = None, *, user_id: str | None = None) -> bool:
-        """将记忆数据保存到文件并更新缓存。"""
+        """将记忆数据以原子写入方式保存到文件并更新缓存。
+
+        写入流程（防数据损坏）：
+        1. 浅拷贝输入数据，注入当前时间戳 ``lastUpdated``
+        2. 写入临时文件 ``memory.{uuid}.tmp``
+        3. ``os.replace()`` 原子替换目标文件（POSIX 保证原子性）
+        4. 读取新文件 mtime 并更新缓存
+
+        调用示例：
+        ```python
+        storage = FileMemoryStorage()
+        memory = storage.load(agent_name="my-agent", user_id="user_123")
+        memory["facts"].append({"content": "新事实", ...})
+        storage.save(memory, agent_name="my-agent", user_id="user_123")  # → True
+        ```
+
+        Args:
+            memory_data: 要保存的记忆数据字典。
+            agent_name: 若提供则按 Agent 隔离保存。
+            user_id: 若提供则按用户隔离保存。
+
+        Returns:
+            保存成功返回 ``True``，IO 错误返回 ``False``。
+        """
         file_path = self._get_memory_file_path(agent_name, user_id=user_id)
         cache_key = self._cache_key(agent_name, user_id=user_id)
 

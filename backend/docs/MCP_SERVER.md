@@ -1,41 +1,39 @@
-# MCP (Model Context Protocol) Configuration
+# MCP（模型上下文协议）配置
 
-DeerFlow supports configurable MCP servers and skills to extend its capabilities, which are loaded from a dedicated `extensions_config.json` file in the project root directory.
+DeerFlow 支持可配置的 MCP 服务器和技能来扩展其功能，这些服务器和技能是从项目根目录中的专用 `extensions_config.json` 文件加载的。
 
-## Setup
+## 设置
 
-1. Copy `extensions_config.example.json` to `extensions_config.json` in the project root directory.
+1. 将 `extensions_config.example.json` 复制到项目根目录下的 `extensions_config.json` 中。
    ```bash
    # Copy example configuration
    cp extensions_config.example.json extensions_config.json
    ```
    
-2. Enable the desired MCP servers or skills by setting `"enabled": true`.
-3. Configure each server’s command, arguments, and environment variables as needed.
-4. Restart the application to load and register MCP tools.
+2. 通过设置 `"enabled": true` 启用所需的 MCP 服务器或技能。
+3. 根据需要配置每个服务器的命令、参数和环境变量。
+4. 重启应用以加载并注册 MCP 工具。
 
-## Filesystem MCP Servers
+## 文件系统 MCP 服务器
 
-DeerFlow already provides built-in file tools for thread-scoped workspace access.
-Do not add an MCP filesystem server for the same DeerFlow workspace. The
-overlapping file tools use different path semantics, which can make LLM tool
-selection and file access behavior unstable.
+DeerFlow 已经提供了用于线程范围工作区访问的内置文件工具。
+不要为同一个 DeerFlow 工作区添加 MCP 文件系统服务器。
+重叠的文件工具使用不同的路径语义，会让 LLM 的工具选择和文件访问行为变得不稳定。
 
-DeerFlow does not currently adapt the MCP Roots mode for filesystem servers. In
-particular, it does not publish per-thread MCP roots or map DeerFlow sandbox
-paths such as `/mnt/user-data/...` to paths accepted by
-`@modelcontextprotocol/server-filesystem`. Use DeerFlow's built-in file tools
-for DeerFlow workspace files.
+DeerFlow 目前不适配文件系统服务器的 MCP roots 模式。
+尤其是，它不会发布每个线程的 MCP root，也不会把 DeerFlow 沙箱路径
+（例如 `/mnt/user-data/...`）映射到 `@modelcontextprotocol/server-filesystem`
+接受的路径。处理 DeerFlow 工作区文件时，请使用 DeerFlow 的内置文件工具。
 
-## OAuth Support (HTTP/SSE MCP Servers)
+## OAuth 支持（HTTP/SSE MCP 服务器）
 
-For `http` and `sse` MCP servers, DeerFlow supports OAuth token acquisition and automatic token refresh.
+对于 `http`和`sse` MCP 服务器，DeerFlow 支持 OAuth 令牌获取和自动令牌刷新。
 
-- Supported grants: `client_credentials`, `refresh_token`
-- Configure per-server `oauth` block in `extensions_config.json`
-- Secrets should be provided via environment variables (for example: `$MCP_OAUTH_CLIENT_SECRET`)
+- 支持的授权类型：`client_credentials`、`refresh_token`
+- 在 `extensions_config.json`中配置每个服务器`oauth` 块
+- 秘密应通过环境变量提供（例如：`$MCP_OAUTH_CLIENT_SECRET`）
 
-Example:
+示例：
 
 ```json
 {
@@ -58,11 +56,11 @@ Example:
 }
 ```
 
-## Custom Tool Interceptors
+## 自定义工具拦截器
 
-You can register custom interceptors that run before every MCP tool call. This is useful for injecting per-request headers (e.g., user auth tokens from the LangGraph execution context), logging, or metrics.
+您可以注册在每个 MCP 工具调用之前运行的自定义拦截器。这对于注入每个请求标头（例如，来自 LangGraph 执行上下文的用户身份验证令牌）、日志记录或指标非常有用。
 
-Declare interceptors in `extensions_config.json` using the `mcpInterceptors` field:
+使用 `mcpInterceptors`字段在`extensions_config.json` 中声明拦截器：
 
 ```json
 {
@@ -73,9 +71,9 @@ Declare interceptors in `extensions_config.json` using the `mcpInterceptors` fie
 }
 ```
 
-Each entry is a Python import path in `module:variable` format (resolved via `resolve_variable`). The variable must be a **no-arg builder function** that returns an async interceptor compatible with `MultiServerMCPClient`’s `tool_interceptors` interface, or `None` to skip.
+每个条目都是 `module:variable`格式的 Python 导入路径（通过`resolve_variable`解析）。该变量必须是一个**无参数构建器函数**，它返回与`MultiServerMCPClient`的`tool_interceptors`接口兼容的异步拦截器，或者要跳过的`None` 。
 
-Example interceptor that injects auth headers from LangGraph metadata:
+从 LangGraph 元数据注入身份验证标头的示例拦截器：
 
 ```python
 def build_auth_interceptor():
@@ -89,24 +87,24 @@ def build_auth_interceptor():
     return interceptor
 ```
 
-- A single string value is accepted and normalized to a one-element list.
-- Invalid paths or builder failures are logged as warnings without blocking other interceptors.
-- The builder return value must be `callable`; non-callable values are skipped with a warning.
+- 接受单个字符串值并将其标准化为单元素列表。
+- 无效路径或构建器失败将被记录为警告，而不会阻止其他拦截器。
+- 构建器返回值必须是 `callable`；不可调用的值将被跳过并带有警告。
 
-## How It Works
+## 工作原理
 
-MCP servers expose tools that are automatically discovered and integrated into DeerFlow’s agent system at runtime. Once enabled, these tools become available to agents without additional code changes.
+MCP 服务器公开了在运行时自动发现并集成到 DeerFlow 代理系统中的工具。启用后，代理即可使用这些工具，无需进行额外的代码更改。
 
-## Example Capabilities
+## 示例功能
 
-MCP servers can provide access to:
+MCP 服务器可以提供对：
 
-- **Databases** (e.g., PostgreSQL)
-- **External APIs** (e.g., GitHub, Brave Search)
-- **Browser automation** (e.g., Puppeteer)
-- **Custom MCP server implementations**
+- **数据库**（例如，PostgreSQL）
+- **外部 APIs** （例如，GitHub、Brave Search）
+- **浏览器自动化**（例如，Puppeteer）
+- **自定义 MCP 服务器实现**
 
-## Learn More
+## 了解更多信息
 
-For detailed documentation about the Model Context Protocol, visit:  
+有关模型上下文协议的详细文档，请访问：
 https://modelcontextprotocol.io

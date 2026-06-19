@@ -1,4 +1,29 @@
-"""记忆更新器：负责读取、写入与更新记忆数据。"""
+"""记忆更新器：负责读取、写入与通过 LLM 更新记忆数据。
+
+完整更新流水线：
+```
+对话完成 (MemoryMiddleware / SummarizationHook)
+       ↓
+update_memory(messages)                     ← 入口
+       ↓
+_prepare_update_prompt()                    ← 加载当前记忆 + 构建提示词
+  ├─ get_memory_data()                      ← 从 storage 加载 memory.json
+  ├─ format_conversation_for_update()       ← 格式化对话为纯文本
+  └─ MEMORY_UPDATE_PROMPT.format(...)       ← 渲染提示模板
+       ↓
+model.invoke(prompt)                        ← 调用 LLM
+       ↓
+_finalize_update()
+  ├─ _parse_memory_update_response()        ← 从 LLM 输出中提取 JSON
+  ├─ _apply_updates()                       ← 应用 user/history/facts 更新
+  ├─ _strip_upload_mentions_from_memory()   ← 清除上传相关引用
+  └─ storage.save()                         ← 原子写入 memory.json
+```
+
+线程安全：同步/异步双路径。
+- **异步路径**（``aupdate_memory``）：通过 ``asyncio.to_thread`` 委托给同步路径
+- **同步路径**（``update_memory``）：检测到运行中的事件循环时卸载到专用线程池
+   ``_SYNC_MEMORY_UPDATER_EXECUTOR``，避免跨循环连接复用（issue #2615）"""
 
 import asyncio
 import atexit
@@ -282,7 +307,34 @@ def _normalize_memory_update_fact(fact: Any) -> dict[str, Any] | None:
 
 
 def _normalize_memory_update_data(update_data: dict[str, Any]) -> dict[str, Any]:
-    """将解析后的记忆更新数据强制转换为 ``_apply_updates`` 期望的形状。"""
+    """将 LLM 输出的原始字典归一化为 ``_apply_updates`` 期望的标准形状。
+
+    安全策略（fail-safe）：
+    - ``newFacts`` 中个别格式错误的事实会被**跳过**（不阻塞整体更新）
+    - 但如果 ``factsToRemove`` 非空且 ``newFacts`` 中存在格式错误 → 抛异常拒绝
+      （理由：删除了事实但新增失败 = 数据丢失，宁可不更新）
+
+    不接受的输入（返回空结构或不完整的会被拒绝）：
+    ```python
+    # 1. 置信度为 bool → 丢弃
+    {"content": "...", "confidence": True}
+
+    # 2. content 为空 → 丢弃
+    {"content": "", "category": "preference"}
+
+    # 3. confidence 无法解析为 float → 丢弃
+    {"content": "...", "confidence": "high"}
+    ```
+
+    Args:
+        update_data: 从 LLM 响应中解析出的原始字典。
+
+    Returns:
+        归一化后的标准字典（``{"user": {}, "history": {}, "newFacts": [...], "factsToRemove": [...]}``）。
+
+    Raises:
+        json.JSONDecodeError: factsToRemove 非空但 newFacts 有格式错误 → 拒绝部分更新。
+    """
     user = update_data.get("user")
     history = update_data.get("history")
     new_facts = update_data.get("newFacts")
@@ -314,11 +366,39 @@ def _normalize_memory_update_data(update_data: dict[str, Any]) -> dict[str, Any]
 
 
 def _parse_memory_update_response(response_content: Any) -> dict[str, Any]:
-    """从 LLM 响应中解析第一个合法的记忆更新 JSON 对象。
+    """从 LLM 响应中提取第一个合法的记忆更新 JSON 对象。
 
-    即便提示词要求仅返回 JSON，部分提供方仍可能将 JSON 包裹在思考过程、
-    散文或 Markdown 围栏中。该解析器接受可安全抽取的 JSON 对象，但不会
-    修复被截断或格式错误的 JSON。
+    LLM 输出可能被包裹在思考过程、散文或 Markdown 围栏中——
+    本函数用 ``re.finditer(r"\\{", ...)`` 扫描每个 ``{`` 位置并尝试 ``raw_decode``，
+    直到找到同时包含 ``user``/``history``/``newFacts``/``factsToRemove`` 四个顶层键的
+    合法 JSON 对象。
+
+    输入示例（LLM 原始输出）：
+    ```
+    好的，我来分析对话并更新记忆。
+    {
+      "user": { ... },
+      "history": { ... },
+      "newFacts": [ ... ],
+      "factsToRemove": []
+    }
+    更新完成。
+    ```
+    → 从第一个 ``{`` 开始 raw_decode，命中后返回 ``_normalize_memory_update_data(parsed)``
+
+    不会被修复的情况：
+    - JSON 被截断（``{"user": {...}`` 缺 ``}``）→ 跳过该 ``{`` 继续扫描
+    - JSON 不包含四个必需键 → 跳过继续扫描
+    - 整个响应无合法 JSON → 抛出 ``json.JSONDecodeError``
+
+    Args:
+        response_content: LLM 响应的原始内容（str 或内容块列表）。
+
+    Returns:
+        归一化后的记忆更新数据字典。
+
+    Raises:
+        json.JSONDecodeError: 未找到包含四个必需顶层键的合法 JSON 对象。
     """
     response_text = _extract_text(response_content).strip()
     decoder = json.JSONDecoder()
@@ -602,15 +682,47 @@ class MemoryUpdater:
         update_data: dict[str, Any],
         thread_id: str | None = None,
     ) -> dict[str, Any]:
-        """将 LLM 生成的更新应用到记忆中。
+        """将 LLM 生成的更新应用到记忆数据结构中（原地修改深拷贝）。
+
+        更新步骤：
+        1. **User 段**：遍历 ``workContext/personalContext/topOfMind``，仅当
+           ``shouldUpdate=true`` 且 ``summary`` 非空时才覆盖
+        2. **History 段**：同上逻辑，遍历 ``recentMonths/earlierContext/longTermBackground``
+        3. **删除事实**：按 ``factsToRemove`` 中的 ID 列表移除
+        4. **新增事实**：置信度 ≥ ``fact_confidence_threshold``（默认 0.7）且内容不重复才追加
+        5. **截断**：按置信度降序保留前 ``max_facts``（默认 100）条
+
+        输入/输出示例：
+        ```python
+        current_memory = {
+            "user": {"workContext": {"summary": "旧摘要", "updatedAt": "..."}},
+            "history": {"recentMonths": {"summary": "", "updatedAt": ""}},
+            "facts": [{"id":"f1", "content":"偏好 Python", "confidence": 0.9}],
+        }
+        update_data = {
+            "user": {"workContext": {"summary": "新摘要", "shouldUpdate": True}},
+            "history": {},
+            "newFacts": [{"content": "正在学 Rust", "category": "goal", "confidence": 0.8}],
+            "factsToRemove": [],
+        }
+        # → 返回:
+        # {
+        #     "user": {"workContext": {"summary": "新摘要", "updatedAt": "2026-..."}},
+        #     "history": {"recentMonths": {"summary": "", "updatedAt": ""}},
+        #     "facts": [
+        #         {"id":"f1", "content":"偏好 Python", "confidence":0.9},
+        #         {"id":"f2", "content":"正在学 Rust", "category":"goal", "confidence":0.8},
+        #     ],
+        # }
+        ```
 
         Args:
-            current_memory: 当前记忆数据。
-            update_data: 来自 LLM 的更新。
-            thread_id: 可选的线程 ID，用于追踪来源。
+            current_memory: 当前记忆数据（会被深拷贝，原对象不受影响）。
+            update_data: LLM 生成的归一化更新数据。
+            thread_id: 可选的线程 ID，用于 ``source`` 字段追踪来源。
 
         Returns:
-            更新后的记忆数据。
+            更新后的记忆数据字典。
         """
         config = get_memory_config()
         now = utc_now_iso_z()
@@ -691,18 +803,31 @@ def update_memory_from_conversation(
     reinforcement_detected: bool = False,
     user_id: str | None = None,
 ) -> bool:
-    """根据会话更新记忆的便捷函数。
+    """根据会话更新记忆的便捷函数（创建临时 ``MemoryUpdater`` 实例）。
+
+    一行调用完成完整更新流水线：
+    ```python
+    ok = update_memory_from_conversation(
+        messages=filtered_msgs,
+        thread_id="thread_abc",
+        agent_name="my-agent",
+        user_id="user_123",
+        correction_detected=True,
+    )
+    if ok:
+        print("记忆已更新")
+    ```
 
     Args:
-        messages: 会话消息列表。
-        thread_id: 可选的线程 ID。
+        messages: 会话消息列表（建议先用 ``filter_messages_for_memory()`` 筛选）。
+        thread_id: 可选的线程 ID，写入事实的 ``source`` 字段。
         agent_name: 若提供则按 Agent 隔离更新记忆；为 ``None`` 时更新全局记忆。
         correction_detected: 最近的对话轮次中是否包含显式纠正信号。
         reinforcement_detected: 最近的对话轮次中是否包含正向强化信号。
         user_id: 若提供则按用户隔离记忆。
 
     Returns:
-        成功返回 ``True``，失败返回 ``False``。
+        成功返回 ``True``，LLM 调用失败、JSON 解析失败等返回 ``False``。
     """
     updater = MemoryUpdater()
     return updater.update_memory(messages, thread_id, agent_name, correction_detected, reinforcement_detected, user_id=user_id)

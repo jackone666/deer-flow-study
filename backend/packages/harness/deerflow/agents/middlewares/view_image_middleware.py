@@ -1,4 +1,28 @@
-"""在 LLM 调用前将图片详情注入到会话中的中间件。"""
+"""在 LLM 调用前将图片详情注入到会话中的中间件。
+
+工作流程：
+```
+用户调用 view_image("/path/to/img.png") 工具
+       ↓
+ToolNode 执行 → 图片 base64 写入 state.viewed_images
+       ↓
+ViewImageMiddleware.before_model() 被触发
+       ├─ 检查最后一条 AIMessage 是否含 view_image tool_call
+       ├─ 检查所有 tool_call 是否已有对应 ToolMessage（全部完成？）
+       ├─ 检查是否已注入过（防重复）
+       └─ 是 → 构造 HumanMessage 包含 base64 图片数据 → 注入
+       ↓
+LLM 看到图片内容，可以分析/描述
+```
+
+注入的消息格式：
+```python
+HumanMessage(content=[
+    {"type": "text", "text": "Here are the images you've viewed:"},
+    {"type": "text", "text": "\\n- **/mnt/user-data/outputs/chart.png** (image/png)"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KG..."}},
+])
+```"""
 
 import logging
 from typing import override

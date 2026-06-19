@@ -31,7 +31,7 @@ class ThreadState(AgentState):
 | 部署方式 | 持久化 | 说明 |
 |---------|--------|------|
 | **LangGraph Studio (本地)** | ❌ 否 | 仅内存存储，重启后丢失 |
-| **LangGraph Platform** | ✅ 是 | 自动持久化到数据库 |
+| **LangGraph 平台** | ✅ 是 | 自动持久化到数据库 |
 | **自定义 + Checkpointer** | ✅ 是 | 需配置 PostgreSQL/SQLite checkpointer |
 
 ### 如何启用持久化
@@ -218,7 +218,7 @@ def test_title_generation():
 
 ### 为什么使用 State 而非 Metadata？
 
-| 特性 | State | Metadata |
+| 特性 | 状态 | 元数据 |
 |------|-------|----------|
 | **持久化** | ✅ 自动（通过 checkpointer） | ⚠️ 取决于实现 |
 | **版本控制** | ✅ 支持时间旅行 | ❌ 不支持 |

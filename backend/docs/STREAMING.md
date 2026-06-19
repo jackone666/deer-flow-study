@@ -18,10 +18,10 @@
 
 | 维度 | Gateway 路径 | DeerFlowClient 路径 |
 |---|---|---|
-| 入口 | FastAPI `/runs/stream` endpoint | `DeerFlowClient.stream(message)` |
+| 入口 | FastAPI `/runs/stream` 端点 | `DeerFlowClient.stream(message)` |
 | 触发层 | `runtime/runs/worker.py::run_agent` | `packages/harness/deerflow/client.py::DeerFlowClient.stream` |
-| 执行模型 | `async def` + `agent.astream()` | sync generator + `agent.stream()` |
-| 事件传输 | `StreamBridge`（asyncio Queue）+ `sse_consumer` | 直接 `yield` |
+| 执行模型 | `async def` + `agent.astream()` | 同步发生器 + `agent.stream()` |
+| 事件传输 | `StreamBridge`（异步队列）+ `sse_consumer` | 直接 `yield` |
 | 序列化 | `serialize(chunk)` → 纯 JSON dict，匹配 LangGraph Platform wire 格式 | `StreamEvent.data`，携带原生 LangChain 对象 |
 | 消费者 | 前端 `useStream` React hook、飞书/Slack/Telegram channel、LangGraph SDK 客户端 | Jupyter notebook、集成测试、内部 Python 脚本 |
 | 生命周期管理 | `RunManager`：run_id 跟踪、disconnect 语义、multitask 策略、heartbeat | 无；函数返回即结束 |
@@ -72,10 +72,10 @@ flowchart LR
     class C custom
 ```
 
-| Mode | 发射时机 | Payload | 粒度 |
+| 模式 | 发射时机 | 有效负载 | 粒度 |
 |---|---|---|---|
-| `values` | 每个 graph 节点完成后 | 完整 state dict（title、messages、artifacts）| 节点级 |
-| `messages` | LLM 每次 yield 一个 chunk；tool 节点完成时 | `(AIMessageChunk \| ToolMessage, metadata_dict)` | token 级 |
+| `values` | 每个 graph 节点完成后 | 完整 state dict（title、messages、artifacts） | 节点级 |
+| `messages` | LLM 每次 yield 一个 chunk；tool 节点完成时 | `(AIMessageChunk \ | ToolMessage，metadata_dict)` | token 级 |
 | `custom` | 用户代码显式调用 `StreamWriter.write()` | 任意 dict | 应用定义 |
 
 ### 两套命名的由来
@@ -209,7 +209,7 @@ counted_usage_ids: set[str] = set()  # usage_metadata 幂等计数
 
 乍看像是"三份几乎一样的东西"，实际每个管**不同的不变式**。
 
-| Set | 负责的不变式 | 被谁填充 | 被谁查询 |
+| 套装 | 负责的不变式 | 被谁填充 | 被谁查询 |
 |---|---|---|---|
 | `seen_ids` | 连续两个 `values` 快照里同一条 message 只生成一个 `messages-tuple` 事件 | values 分支每处理一条消息就加入 | values 分支处理下一条消息前检查 |
 | `streamed_ids` | 如果一条消息已经通过 `messages` 模式 token 级流过，values 快照到达时**不要**再合成一次完整 `messages-tuple` | messages 分支每发一个 AI/tool 事件就加入 | values 分支看到消息时检查 |

@@ -106,7 +106,15 @@ def _convert_markdown_table(text: str) -> str:
 
 
 def _adapt_markdown_for_dingtalk(text: str) -> str:
-    """将 Markdown 转换为钉钉 sampleMarkdown 渲染器能识别的子集。"""
+    """将 Markdown 转换为钉钉 sampleMarkdown 渲染器能识别的子集。
+
+    钉钉的 sampleMarkdown 不支持标准 Markdown 的代码块、内联代码、表格和水平线。
+    本函数做以下转换：
+    - 围栏代码块 → 引用块（带语言标签）
+    - 内联代码 → 加粗文本
+    - Markdown 表格 → 引用块格式的键值对
+    - 水平线 → 等宽字符分隔线
+    """
 
     def _code_block_to_quote(match: re.Match) -> str:
         """把 Markdown 代码块改写成引用块。"""

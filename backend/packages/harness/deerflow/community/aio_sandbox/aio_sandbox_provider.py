@@ -134,16 +134,16 @@ class AioSandboxProvider(SandboxProvider):
 
     def __init__(self):
         """初始化提供者,加载配置、创建后端、注册信号处理并启动空闲检查。"""
+        # 进程级互斥锁：保护沙箱池的并发访问
         self._lock = threading.Lock()
         self._sandboxes: dict[str, AioSandbox] = {}  # sandbox_id -> AioSandbox instance
         self._sandbox_infos: dict[str, SandboxInfo] = {}  # sandbox_id -> SandboxInfo (for destroy)
         self._thread_sandboxes: dict[str, str] = {}  # thread_id -> sandbox_id
         self._thread_locks: dict[str, threading.Lock] = {}  # thread_id -> in-process lock
         self._last_activity: dict[str, float] = {}  # sandbox_id -> last activity timestamp
-        # Warm pool: released sandboxes whose containers are still running.
-        # Maps sandbox_id -> (SandboxInfo, release_timestamp).
-        # Containers here can be reclaimed quickly (no cold-start) or destroyed
-        # when replicas capacity is exhausted.
+        # Warm pool: 已释放但容器仍在运行的沙箱。
+        # 映射 sandbox_id -> (SandboxInfo, release_timestamp)。
+        # 池中的容器可被快速回收（无冷启动），或在超出副本容量时被销毁。
         self._warm_pool: dict[str, tuple[SandboxInfo, float]] = {}
         self._shutdown_called = False
         self._idle_checker_stop = threading.Event()

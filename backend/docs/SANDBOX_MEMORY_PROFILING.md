@@ -1,31 +1,30 @@
-# Sandbox Memory Profiling
+# 沙箱内存分析
 
-This guide records a repeatable baseline before changing the sandbox runtime.
-Issue #3213 reports per-sandbox memory near 1 GiB in Kubernetes. Before adding
-or recommending a new provider, capture the current AIO sandbox baseline and
-compare candidates with the same DeerFlow workload.
+本指南在更改沙箱运行时之前记录了可重复的基线。
+问题 #3213 报告 Kubernetes 中每个沙箱的内存接近 1 GiB。
+在添加或推荐新的提供者之前，请捕获当前 AIO 沙箱基线，
+并用相同 DeerFlow 工作负载对比候选运行时。
 
-## What to Measure
+## 测量什么
 
-Measure at least these samples:
+至少测量这些样本：
 
-1. Empty sandbox after it becomes ready.
-2. After a simple bash command.
-3. After a Python task that imports common packages.
-4. After a Node task when Node-based workloads are expected.
-5. After generating files under `/mnt/user-data/outputs`.
-6. After release and warm reuse.
-7. At the target concurrency level, for example 10, 50, or 100 sandboxes.
+1. 准备就绪后清空沙箱。
+2. 在一个简单的 bash 命令之后。
+3. 在导入公共包的Python任务之后。
+4. 当需要基于节点的工作负载时，在节点任务之后。
+5. 在`/mnt/user-data/outputs`下生成文件后。
+6. 释放并预热复用后。
+7. 在目标并发级别，例如 10、50 或 100 个沙箱。
 
-`kubectl top` reports Kubernetes/container working set memory. Treat it as a
-capacity signal, not exclusive RSS/PSS. Pod-level memory includes every
-container in the Pod and may include cache charged to the cgroup. If a result
-looks surprising, inspect the sandbox processes and cgroup metrics on the node
-before drawing conclusions.
+`kubectl top` 报告 Kubernetes/container 工作集内存。将其视为容量规划信号，
+而不是独占的 RSS/PSS。Pod 级内存包括 Pod 中的每个容器，
+并且可能包含计入 cgroup 的缓存。如果结果看起来异常，
+请先检查节点上的沙箱进程和 cgroup 指标，再下结论。
 
-## Capture a Snapshot
+## 捕捉快照
 
-Run this from the repository root:
+从存储库根运行此命令：
 
 ```bash
 python scripts/sandbox_memory_profile.py \
@@ -36,7 +35,7 @@ python scripts/sandbox_memory_profile.py \
   --format markdown
 ```
 
-Use a descriptive `--sample` value for each phase:
+对每个阶段使用描述性的 `--sample` 值：
 
 ```bash
 python scripts/sandbox_memory_profile.py --sample after-bash --format json
@@ -44,38 +43,37 @@ python scripts/sandbox_memory_profile.py --sample after-python --format json
 python scripts/sandbox_memory_profile.py --sample after-artifact --format json
 ```
 
-`--include-processes` runs `kubectl exec ... ps` in each sandbox Pod and adds
-the highest-RSS processes to the report. This helps distinguish Pod-level cgroup
-memory from process RSS. The two numbers will not match exactly because cgroup
-memory can include cache and other kernel-accounted memory.
+`--include-processes`在每个沙箱 Pod 中运行`kubectl exec ... ps` 并添加
+最高 RSS 进程报告。这有助于区分 Pod 级别的 cgroup
+进程 RSS 的内存。这两个数字不会完全匹配，因为 cgroup
+内存可以包括缓存和其他内核占用的内存。
 
-Save the raw JSON when comparing backends so totals, pod names, images,
-requests, limits, and timestamps can be audited later.
+比较后端时保存原始 JSON 以便总数、pod 名称、图像、
+请求、限制和时间戳可以稍后审核。
 
-## Candidate Runtime Matrix
+## 候选运行时矩阵
 
-For AIO, CubeSandbox, OpenSandbox, gVisor, Kata, or another candidate, compare
-the same workload and record:
+对于 AIO、CubeSandbox、OpenSandbox、gVisor、Kata 或其他候选方案，
+请比较相同工作负载并记录：
 
-| Area | Required Evidence |
+| 区域 | 所需证据 |
 | --- | --- |
-| Capacity | Pod or instance count, total memory, average memory, max memory |
-| Startup | Ready latency at 1, 10, 50, and 100 concurrent sandboxes |
-| Commands | Bash output, timeout behavior, failure shape |
-| Files | `read_file`, `write_file`, binary `update_file`, `list_dir`, `glob`, `grep` |
-| Uploads | Files uploaded by the gateway are visible inside the sandbox |
-| Artifacts | Files written to `/mnt/user-data/outputs` are readable by the backend artifact API |
-| Paths | `/mnt/user-data/workspace`, `/mnt/user-data/uploads`, `/mnt/user-data/outputs`, `/mnt/acp-workspace`, and skills paths keep their expected semantics |
-| Isolation | Different users and threads cannot read each other's data |
-| Cleanup | Release, idle timeout, process restart, and orphan cleanup free resources |
-| Operations | Deployment prerequisites, privileged components, networking, storage, and upgrade path |
+| 容量 | Pod 或实例计数、总内存、平均内存、最大内存 |
+| 启动 | 1、10、50 和 100 个并发沙箱的就绪延迟 |
+| 命令 | Bash 输出、超时行为、失败形态 |
+| 文件 | `read_file`、`write_file`、二进制 `update_file`、`list_dir`、`glob`、`grep` |
+| 上传 | 网关上传的文件在沙箱内可见 |
+| 工件 | 写入 `/mnt/user-data/outputs` 的文件可由后端工件 API 读取 |
+| 路径 | `/mnt/user-data/workspace`、`/mnt/user-data/uploads`、`/mnt/user-data/outputs`、`/mnt/acp-workspace` 和技能路径保持其预期语义 |
+| 隔离 | 不同用户和线程不能互相读取对方的数据 |
+| 清理 | 释放、空闲超时、进程重启、孤儿清理释放资源 |
+| 运营 | 部署先决条件、特权组件、网络、存储和升级路径 |
 
-## PR Guidance
+## PR 指导
 
-Do not claim that a new provider fixes high-concurrency memory usage until the
-same DeerFlow workload has been measured on both the current AIO sandbox and the
-candidate backend.
+在相同 DeerFlow 工作负载已经同时跑过当前 AIO 沙箱和候选后端之前，
+不要声称新的提供者修复了高并发内存占用问题。
 
-For an experimental provider PR, prefer `Related to #3213` unless the PR also
-includes reproducible DeerFlow workload data that demonstrates the target memory
-reduction and preserves uploads, outputs, artifacts, and isolation behavior.
+对于实验提供者 PR，更喜欢 `Related to #3213`，除非 PR 也
+包括可重现的 DeerFlow 工作负载数据，用于演示目标内存
+减少并保留上传、输出、工件和隔离行为。

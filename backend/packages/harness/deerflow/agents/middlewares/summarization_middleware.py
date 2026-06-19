@@ -214,9 +214,17 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages: list[AnyMessage],
         cutoff_index: int,
     ) -> tuple[list[AnyMessage], list[AnyMessage]]:
-        """按父类逻辑划分消息，再对最近加载的技能 bundle 进行恢复。"""
+        """按父类逻辑划分消息，再对最近加载的技能 bundle 进行恢复。
+
+        技能恢复的目的：当模型在较早的轮次中通过 read_file 加载了技能文件，
+        后续对话轮次可能仍然依赖这些技能内容。如果摘要压缩将这些技能加载消息
+        移除，模型会"忘记"已加载的技能。本方法将被压缩消息中最近加载的技能
+        bundle 恢复到保留区，确保压缩后技能上下文仍然可用。
+        """
+        # 先用父类逻辑进行基础划分
         to_summarize, preserved = self._partition_messages(messages, cutoff_index)
 
+        # 技能保留功能已关闭或无可压缩消息时跳过
         if self._preserve_recent_skill_count == 0 or self._preserve_recent_skill_tokens == 0 or not to_summarize:
             return to_summarize, preserved
 
@@ -262,16 +270,24 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         messages: list[AnyMessage],
         skills_root: str,
     ) -> list[_SkillBundle]:
-        """定位加载技能文件的 AIMessage 与其配对 ToolMessage 组合。"""
+        """定位加载技能文件的 AIMessage 与其配对 ToolMessage 组合。
+
+        扫描消息列表，找到所有"模型调用 read_file 读取技能目录下文件"的
+        tool-call 轮次，并将 AIMessage + 对应的 ToolMessage 打包为
+        _SkillBundle。每个 bundle 包含：AI 消息索引、技能 tool 索引列表、
+        tool_call_id 集合、token 数和去重键。
+        """
         bundles: list[_SkillBundle] = []
         n = len(messages)
         i = 0
         while i < n:
             msg = messages[i]
+            # 只关注有 tool_calls 的 AIMessage
             if not (isinstance(msg, AIMessage) and msg.tool_calls):
                 i += 1
                 continue
 
+            # 检查 tool_calls 中是否有读取技能文件的调用
             tool_calls = list(msg.tool_calls)
             skill_paths_by_id: dict[str, str] = {}
             for tc in tool_calls:
@@ -281,6 +297,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
                     if tc_id and path:
                         skill_paths_by_id[tc_id] = path
 
+            # 该 AIMessage 中没有技能相关的 tool call，跳过
             if not skill_paths_by_id:
                 i += 1
                 continue
@@ -290,10 +307,12 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
             skill_tool_indices: list[int] = []
             matched_skill_call_ids: set[str] = set()
 
+            # 找到紧跟 AIMessage 的连续 ToolMessage 范围
             j = i + 1
             while j < n and isinstance(messages[j], ToolMessage):
                 j += 1
 
+            # 在 ToolMessage 范围内匹配技能文件读取的响应
             for k in range(i + 1, j):
                 tool_msg = messages[k]
                 if isinstance(tool_msg, ToolMessage) and tool_msg.tool_call_id in skill_paths_by_id:
@@ -302,6 +321,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
                     skill_tool_indices.append(k)
                     matched_skill_call_ids.add(tool_msg.tool_call_id)
 
+            # 没有匹配到任何 ToolMessage（异常情况），继续扫描
             if not skill_tool_indices:
                 i = j
                 continue
@@ -320,7 +340,14 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         return bundles
 
     def _select_bundles_to_rescue(self, bundles: list[_SkillBundle]) -> list[_SkillBundle]:
-        """在数量/Token 预算内，按从新到旧挑选需要保留的 bundle。"""
+        """在数量/Token 预算内，按从新到旧挑选需要保留的 bundle。
+
+        选择策略：
+        1. 从最新的 bundle 开始向前扫描（最近加载的技能最可能被使用）
+        2. 按 skill_key 去重（同一技能文件只保留最新一次加载）
+        3. 跳过 token 数超标的单个 bundle
+        4. 累计 token 数达到预算上限后停止
+        """
         selected: list[_SkillBundle] = []
         if not bundles:
             return selected
@@ -329,13 +356,17 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         total_tokens = 0
         kept = 0
 
+        # 从新到旧遍历（reversed），优先保留最近加载的技能
         for bundle in reversed(bundles):
             if kept >= self._preserve_recent_skill_count:
                 break
+            # 同一技能文件已保留过，跳过
             if bundle.skill_key in seen_skill_keys:
                 continue
+            # 单个 bundle 的 token 数超过单技能预算，跳过
             if bundle.skill_tool_tokens > self._preserve_recent_skill_tokens_per_skill:
                 continue
+            # 累计 token 数超过总预算，停止
             if total_tokens + bundle.skill_tool_tokens > self._preserve_recent_skill_tokens:
                 continue
 
@@ -344,6 +375,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
             kept += 1
             seen_skill_keys.add(bundle.skill_key)
 
+        # 恢复原始顺序（从旧到新）
         selected.reverse()
         return selected
 

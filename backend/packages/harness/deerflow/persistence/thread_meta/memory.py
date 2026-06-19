@@ -40,6 +40,8 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return None
+        if item.value is None:
+            return None
         record = dict(item.value)
         if resolved is not None and record.get("user_id") != resolved:
             return None
@@ -118,6 +120,8 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return not require_existing
+        if item.value is None:
+            return True
         record_user_id = item.value.get("user_id")
         if record_user_id is None:
             return True
@@ -162,7 +166,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
     @staticmethod
     def _item_to_dict(item) -> dict[str, Any]:
         """把 LangGraph Store 的 SearchItem 转换为调用方期望的 dict 格式。"""
-        val = item.value
+        val = item.value or {}
         return {
             "thread_id": item.key,
             "assistant_id": val.get("assistant_id"),

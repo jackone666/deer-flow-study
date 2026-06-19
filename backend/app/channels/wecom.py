@@ -64,6 +64,7 @@ class WeComChannel(Channel):
         if self._running:
             return
 
+        # 从配置中提取凭据
         bot_id = self.config.get("bot_id")
         bot_secret = self.config.get("bot_secret")
         working_message = self.config.get("working_message")
@@ -82,11 +83,13 @@ class WeComChannel(Channel):
             logger.error("wecom-aibot-python-sdk is not installed. Install it with: uv add wecom-aibot-python-sdk")
             return
         else:
+            # 构造 WSClient 并注册四类消息事件回调
             self._ws_client = WSClient(WSClientOptions(bot_id=self._bot_id, secret=self._bot_secret, logger=logger))
             self._ws_client.on("message.text", self._on_ws_text)
             self._ws_client.on("message.mixed", self._on_ws_mixed)
             self._ws_client.on("message.image", self._on_ws_image)
             self._ws_client.on("message.file", self._on_ws_file)
+            # 在后台异步运行 WS 长连接
             self._ws_task = asyncio.create_task(self._ws_client.connect())
 
             self._running = True
@@ -312,7 +315,14 @@ class WeComChannel(Channel):
         await self.bus.publish_inbound(inbound)
 
     async def _send_ws(self, msg: OutboundMessage, *, _max_retries: int = 3) -> None:
-        """通过 WebSocket 发送一条消息：优先复用 stream_id 续接，否则用 markdown 推送。"""
+        """通过 WebSocket 发送一条消息：优先复用 stream_id 续接，否则用 markdown 推送。
+
+        两种发送模式：
+        - **stream reply**：如果 msg.thread_ts 匹配已有的 WS 帧，则复用
+          已有的 stream_id 进行流式续接（reply_stream），支持增量更新。
+        - **markdown fallback**：如果找不到匹配的帧（如跨进程重启后），
+          则使用 send_message 发送一条全新的 markdown 消息。
+        """
         if not self._ws_client:
             return
         try:
@@ -320,6 +330,7 @@ class WeComChannel(Channel):
         except Exception:
             generate_req_id = None
 
+        # 模式1：流式续接（stream reply）
         if msg.thread_ts and msg.thread_ts in self._ws_frames:
             frame = self._ws_frames[msg.thread_ts]
             stream_id = self._ws_stream_ids.get(msg.thread_ts)
@@ -329,6 +340,7 @@ class WeComChannel(Channel):
             if not stream_id:
                 return
 
+            # 指数退避重试
             last_exc: Exception | None = None
             for attempt in range(_max_retries):
                 try:
@@ -341,6 +353,7 @@ class WeComChannel(Channel):
             if last_exc:
                 raise last_exc
 
+        # 模式2：markdown 全新推送（fallback）
         body = {"msgtype": "markdown", "markdown": {"content": msg.text}}
         last_exc = None
         for attempt in range(_max_retries):

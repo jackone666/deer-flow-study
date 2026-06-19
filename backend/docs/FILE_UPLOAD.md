@@ -107,8 +107,8 @@ DELETE /api/threads/{thread_id}/uploads/{filename}
 以下格式在显式启用 `uploads.auto_convert_documents: true` 时会自动转换为 Markdown：
 - PDF (`.pdf`)
 - PowerPoint (`.ppt`, `.pptx`)
-- Excel (`.xls`, `.xlsx`)
-- Word (`.doc`, `.docx`)
+- Excel（`.xls`，`.xlsx`）
+- 字（`.doc`，`.docx`）
 
 转换后的 Markdown 文件会保存在同一目录下，文件名为原文件名 + `.md` 扩展名。
 
@@ -233,11 +233,11 @@ backend/.deer-flow/threads/
 
 ### 组件
 
-1. **Upload Router** (`app/gateway/routers/uploads.py`)
+1. **上传路由器** (`app/gateway/routers/uploads.py`)
    - 处理文件上传、列表、删除请求
    - 使用 markitdown 转换文档
 
-2. **Uploads Middleware** (`packages/harness/deerflow/agents/middlewares/uploads_middleware.py`)
+2. **上传中间件** (`packages/harness/deerflow/agents/middlewares/uploads_middleware.py`)
    - 在每次 Agent 请求前注入文件列表
    - 自动生成格式化的文件列表消息
 

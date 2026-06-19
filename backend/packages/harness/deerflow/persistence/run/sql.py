@@ -44,7 +44,12 @@ class RunRepository(RunStore):
 
     @staticmethod
     def _safe_json(obj: Any) -> Any:
-        """确保对象可被 JSON 序列化；失败时回退到 ``model_dump()`` 或 ``str()``。"""
+        """确保对象可被 JSON 序列化；失败时回退到 ``model_dump()`` 或 ``str()``。
+
+        递归处理 dict/list/tuple 等容器类型。对于 Pydantic 模型优先尝试
+        ``model_dump()``，其次 ``dict()``。最终回退到 ``str()`` 以保证
+        持久化写入不会因序列化失败而中断整个 run 生命周期。
+        """
         if obj is None:
             return None
         if isinstance(obj, (str, int, float, bool)):

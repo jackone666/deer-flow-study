@@ -1,16 +1,16 @@
-# Task Tool Improvements
+# 任务工具改进
 
-## Overview
+## 概述
 
-The task tool has been improved to eliminate wasteful LLM polling. Previously, when using background tasks, the LLM had to repeatedly call `task_status` to poll for completion, causing unnecessary API requests.
+任务工具已得到改进，以消除浪费的 LLM 轮询。以前，在使用后台任务时，LLM 必须重复调用 `task_status` 来轮询是否完成，从而导致不必要的 API 请求。
 
-## Changes Made
+## 所做的改变
 
-### 1. Removed `run_in_background` Parameter
+### 1. 删除了 `run_in_background` 参数
 
-The `run_in_background` parameter has been removed from the `task` tool. All subagent tasks now run asynchronously by default, but the tool handles completion automatically.
+`run_in_background`参数已从`task` 工具中删除。所有子代理任务现在默认情况下都是异步运行的，但该工具会自动处理完成。
 
-**Before:**
+**之前：**
 ```python
 # LLM had to manage polling
 task_id = task(
@@ -26,7 +26,7 @@ while True:
         break
 ```
 
-**After:**
+**之后：**
 ```python
 # Tool blocks until complete, polling happens in backend
 result = task(
@@ -37,35 +37,35 @@ result = task(
 # Result is available immediately after the call returns
 ```
 
-### 2. Backend Polling
+### 2. 后端轮询
 
-The `task_tool` now:
-- Starts the subagent task asynchronously
-- Polls for completion in the backend (every 2 seconds)
-- Blocks the tool call until completion
-- Returns the final result directly
+现在的`task_tool`：
+- 异步启动子代理任务
+- 在后端轮询完成情况（每 2 秒一次）
+- 阻止工具调用直到完成
+- 直接返回最终结果
 
-This means:
-- ✅ LLM makes only ONE tool call
-- ✅ No wasteful LLM polling requests
-- ✅ Backend handles all status checking
-- ✅ Timeout protection (5 minutes max)
+这意味着：
+- ✅ LLM 仅进行 ONE 工具调用
+- ✅ 没有浪费的 LLM 轮询请求
+- ✅ 后端处理所有状态检查
+- ✅ 超时保护（最多 5 分钟）
 
-### 3. Removed `task_status` from LLM Tools
+### 3. 从 LLM 工具中删除了 `task_status`
 
-The `task_status_tool` is no longer exposed to the LLM. It's kept in the codebase for potential internal/debugging use, but the LLM cannot call it.
+`task_status_tool` 不再暴露于 LLM。它保留在代码库中以供潜在的 internal/debugging 使用，但 LLM 无法调用它。
 
-### 4. Updated Documentation
+### 4.更新文档
 
-- Updated `SUBAGENT_SECTION` in `prompt.py` to remove all references to background tasks and polling
-- Simplified usage examples
-- Made it clear that the tool automatically waits for completion
+- 更新了 `prompt.py`中的`SUBAGENT_SECTION` 以删除所有对后台任务和轮询的引用
+- 简化使用示例
+- 明确表示该工具自动等待完成
 
-## Implementation Details
+## 实施细节
 
-### Polling Logic
+### 轮询逻辑
 
-Located in `packages/harness/deerflow/tools/builtins/task_tool.py`:
+位于`packages/harness/deerflow/tools/builtins/task_tool.py`：
 
 ```python
 # Start background execution
@@ -89,11 +89,11 @@ while True:
         return "Task timed out after 5 minutes"
 ```
 
-### Execution Timeout
+### 执行超时
 
-In addition to polling timeout, subagent execution now has a built-in timeout mechanism:
+除了轮询超时之外，子代理执行现在还有一个内置的超时机制：
 
-**Configuration** (`packages/harness/deerflow/subagents/config.py`):
+**配置** (`packages/harness/deerflow/subagents/config.py`)：
 ```python
 @dataclass
 class SubagentConfig:
@@ -101,21 +101,21 @@ class SubagentConfig:
     timeout_seconds: int = 300  # 5 minutes default
 ```
 
-**Thread Pool Architecture**:
+**线程池架构**：
 
-To avoid nested thread pools and resource waste, we use two dedicated thread pools:
+为了避免嵌套线程池和资源浪费，我们使用两个专用线程池：
 
-1. **Scheduler Pool** (`_scheduler_pool`):
-   - Max workers: 4
-   - Purpose: Orchestrates background task execution
-   - Runs `run_task()` function that manages task lifecycle
+1. **调度程序池** (`_scheduler_pool`)：
+   - 最大worker数：4
+   - 目的：协调后台任务执行
+   - 运行管理任务生命周期的 `run_task()` 函数
 
-2. **Execution Pool** (`_execution_pool`):
-   - Max workers: 8 (larger to avoid blocking)
-   - Purpose: Actual subagent execution with timeout support
-   - Runs `execute()` method that invokes the agent
+2. **执行池** (`_execution_pool`):
+   - 最大worker数：8（更大以避免阻塞）
+   - 目的：具有超时支持的实际子代理执行
+   - 运行调用代理的 `execute()` 方法
 
-**How it works**:
+**它是如何工作的**：
 ```python
 # In execute_async():
 _scheduler_pool.submit(run_task)  # Submit orchestration task
@@ -125,35 +125,35 @@ future = _execution_pool.submit(self.execute, task)  # Submit execution
 exec_result = future.result(timeout=timeout_seconds)  # Wait with timeout
 ```
 
-**Benefits**:
-- ✅ Clean separation of concerns (scheduling vs execution)
-- ✅ No nested thread pools
-- ✅ Timeout enforcement at the right level
-- ✅ Better resource utilization
+**好处**：
+- ✅ 关注点的清晰分离（调度与执行）
+- ✅ 无嵌套线程池
+- ✅ 在正确的级别执行超时
+- ✅ 更好的资源利用率
 
-**Two-Level Timeout Protection**:
-1. **Execution Timeout**: Subagent execution itself has a 5-minute timeout (configurable in SubagentConfig)
-2. **Polling Timeout**: Tool polling has a 5-minute timeout (30 polls × 10 seconds)
+**两级超时保护**：
+1. **执行超时**：子代理执行本身有5分钟的超时（可在SubagentConfig中配置）
+2. **轮询超时**：工具轮询有 5 分钟超时（30 次轮询 × 10 秒）
 
-This ensures that even if subagent execution hangs, the system won't wait indefinitely.
+这确保即使子代理执行挂起，系统也不会无限期地等待。
 
-### Benefits
+### 好处
 
-1. **Reduced API Costs**: No more repeated LLM requests for polling
-2. **Simpler UX**: LLM doesn't need to manage polling logic
-3. **Better Reliability**: Backend handles all status checking consistently
-4. **Timeout Protection**: Two-level timeout prevents infinite waiting (execution + polling)
+1. **降低 API 成本**：不再重复 LLM 轮询请求
+2. **更简单的UX**：LLM不需要管理轮询逻辑
+3. **更好的可靠性**：后端一致地处理所有状态检查
+4. **超时保护**：两级超时防止无限等待（执行+轮询）
 
-## Testing
+## 测试
 
-To verify the changes work correctly:
+要验证更改是否正常工作：
 
-1. Start a subagent task that takes a few seconds
-2. Verify the tool call blocks until completion
-3. Verify the result is returned directly
-4. Verify no `task_status` calls are made
+1. 启动需要几秒钟的子代理任务
+2. 验证工具调用块直至完成
+3. 验证结果直接返回
+4. 验证没有进行 `task_status` 调用
 
-Example test scenario:
+示例测试场景：
 ```python
 # This should block for ~10 seconds then return result
 result = task(
@@ -164,11 +164,11 @@ result = task(
 # result should contain "Done"
 ```
 
-## Migration Notes
+## 迁移说明
 
-For users/code that previously used `run_in_background=True`:
-- Simply remove the parameter
-- Remove any polling logic
-- The tool will automatically wait for completion
+对于之前使用 `run_in_background=True` 的 users/code：
+- 只需删除参数
+- 删除任何轮询逻辑
+- 该工具将自动等待完成
 
-No other changes needed - the API is backward compatible (minus the removed parameter).
+无需其他更改 - API 向后兼容（减去删除的参数）。

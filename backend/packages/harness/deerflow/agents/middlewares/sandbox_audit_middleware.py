@@ -1,4 +1,31 @@
-"""``SandboxAuditMiddleware`` —— bash 命令安全审计。"""
+"""``SandboxAuditMiddleware`` —— bash 命令安全审计。
+
+在每次 ``bash`` 工具调用前对命令进行安全分级：
+
+**高危命令（block）—— 直接拒绝执行：**
+```
+rm -rf /              → 拦截（递归删除根目录）
+curl url | bash       → 拦截（管道到 sh/bash）
+dd if=/dev/zero ...    → 拦截（磁盘清零）
+LD_PRELOAD=... ./app  → 拦截（动态链接器劫持）
+:(){ :|:& };:          → 拦截（fork 炸弹）
+```
+
+**中危命令（warn）—— 执行但追加警告：**
+```
+chmod 777 /app        → 执行 + ⚠️ 警告
+pip install package   → 执行 + ⚠️ 警告
+sudo rm file          → 执行 + ⚠️ 警告
+```
+
+**安全命令（pass）—— 正常执行：**
+```
+ls -la /mnt/user-data/
+cat README.md
+python script.py
+```
+
+每条 bash 命令都会写入结构化审计日志（JSON 格式到 langgraph.log）。"""
 
 
 import json

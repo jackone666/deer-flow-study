@@ -5,8 +5,8 @@
 | 模式 | 启动命令 | Auth 层 | 端口 |
 |------|---------|---------|------|
 | 标准模式 | `make dev` | Gateway AuthMiddleware（全量） | 2026 (nginx) |
-| 直连 Gateway | `cd backend && make gateway` | Gateway AuthMiddleware | 8001 |
-| 直连 LangGraph 兼容性 | 手动运行 LangGraph 工具链时使用 | LangGraph auth | 2024 |
+| 直连 Gateway | `cd backend && make gateway` | 网关 AuthMiddleware | 8001 |
+| 直连 LangGraph 兼容性 | 手动运行 LangGraph 工具链时使用 | LangGraph 授权 | 2024 |
 
 `make dev`、Docker dev 和生产部署默认都运行 Gateway embedded runtime。
 `app.gateway.langgraph_auth` 仅用于保留的直连 LangGraph 工具链 / Studio 兼容性测试，不是标准服务启动路径。
@@ -63,7 +63,7 @@ make dev
 > **CSRF token 提取**：多处用到从 cookie jar 提取 CSRF token，统一使用：
 > ```bash
 > CSRF=$(python3 -c "
-> import http.cookiejar
+> 导入http.cookiejar
 > cj = http.cookiejar.MozillaCookieJar('cookies.txt'); cj.load()
 > print(next(c.value for c in cj if c.name == 'csrf_token'))
 > ")
@@ -93,7 +93,7 @@ curl -s -X POST $BASE/api/v1/auth/initialize \
 
 **预期：**
 - 状态码 201
-- Body: `{"id": "...", "email": "admin@example.com", "system_role": "admin", "needs_setup": false}`
+- 主体：`{"id": "...", "email": "admin@example.com", "system_role": "admin", "needs_setup": false}`
 - `cookies.txt` 包含 `access_token`（HttpOnly）和 `csrf_token`（非 HttpOnly）
 
 #### TC-API-03: 获取当前用户
@@ -454,10 +454,10 @@ done
 
 | 属性 | HTTP access_token | HTTPS access_token | HTTP csrf_token | HTTPS csrf_token |
 |------|------|------|------|------|
-| HttpOnly | Yes | Yes | No | No |
-| Secure | No | **Yes** | No | **Yes** |
-| SameSite | Lax | Lax | Strict | Strict |
-| Max-Age | 无（session cookie） | **604800**（7天） | 无 | 无 |
+| HttpOnly | 是的 | 是的 | 没有 | 没有 |
+| 安全 | 没有 | **是的** | 没有 | **是** |
+| SameSite | 宽松 | 宽松 | 严格 | 严格 |
+| 最大年龄 | 无（session cookie） | **604800**（7天） | 无 | 无 |
 
 ### 3.4 越权访问
 

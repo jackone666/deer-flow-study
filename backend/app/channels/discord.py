@@ -34,6 +34,7 @@ class DiscordChannel(Channel):
         """初始化 Discord 渠道，从配置中读取 token、允许的 guild、线程模式等。"""
         super().__init__(name="discord", bus=bus, config=config)
         self._bot_token = str(config.get("bot_token", "")).strip()
+        # 解析允许的 guild ID 列表
         self._allowed_guilds: set[int] = set()
         for guild_id in config.get("allowed_guilds", []):
             try:
@@ -41,7 +42,9 @@ class DiscordChannel(Channel):
             except (TypeError, ValueError):
                 continue
         self._mention_only: bool = bool(config.get("mention_only", False))
+        # thread_mode 默认与 mention_only 一致：仅在 @机器人时创建独立线程
         self._thread_mode: bool = config.get("thread_mode", self._mention_only)
+        # 始终接受的频道白名单（即使在 mention_only 模式下）
         self._allowed_channels: set[str] = set()
         for channel_id in config.get("allowed_channels", []):
             self._allowed_channels.add(str(channel_id))
@@ -63,6 +66,7 @@ class DiscordChannel(Channel):
         # 正在打字（typing）状态管理
         self._typing_tasks: dict[str, asyncio.Task] = {}
 
+        # Discord 客户端在独立线程中运行（discord.py 使用自己的事件循环）
         self._client = None
         self._thread: threading.Thread | None = None
         self._discord_loop: asyncio.AbstractEventLoop | None = None

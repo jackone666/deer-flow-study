@@ -1,8 +1,8 @@
-# Architecture Overview
+# 架构概述
 
-This document provides a comprehensive overview of the DeerFlow backend architecture.
+本文档提供了 DeerFlow 后端架构的全面概述。
 
-## System Architecture
+## 系统架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -48,23 +48,23 @@ This document provides a comprehensive overview of the DeerFlow backend architec
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Component Details
+## 组件详细信息
 
-### Gateway Embedded Agent Runtime
+### 网关嵌入式代理运行时
 
-The agent runtime is embedded in the FastAPI Gateway and built on LangGraph for robust multi-agent workflow orchestration. Nginx rewrites `/api/langgraph/*` to Gateway's native `/api/*` routes, so the public API remains compatible with LangGraph SDK clients without running a separate LangGraph server.
+代理运行时嵌入在 FastAPI 网关中，并基于 LangGraph 构建，以实现强大的多代理工作流程编排。 Nginx 将 `/api/langgraph/*`重写为网关的本机`/api/*` 路由，因此公共 API 保持与 LangGraph SDK 客户端兼容，而无需运行单独的 LangGraph 服务器。
 
-**Entry Point**: `packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
+**入口点**：`packages/harness/deerflow/agents/lead_agent/agent.py:make_lead_agent`
 
-**Key Responsibilities**:
-- Agent creation and configuration
-- Thread state management
-- Middleware chain execution
-- Tool execution orchestration
-- SSE streaming for real-time responses
+**主要职责**：
+- 代理创建和配置
+- 线程状态管理
+- 中间件链执行
+- 工具执行编排
+- SSE 流式传输实时响应
 
-**Graph registry**: `langgraph.json` remains available for tooling, Studio, or direct LangGraph Server compatibility.
-It is not the default service entrypoint; scripts and Docker deployments run the Gateway embedded runtime.
+**图形注册表**：`langgraph.json` 仍然可用于工具、Studio 或直接 LangGraph 服务器兼容性。
+它不是默认的服务入口点；脚本和 Docker 部署运行 Gateway 嵌入式运行时。
 
 ```json
 {
@@ -75,25 +75,25 @@ It is not the default service entrypoint; scripts and Docker deployments run the
 }
 ```
 
-### Gateway API
+### 网关 API
 
-FastAPI application providing REST endpoints plus the public LangGraph-compatible `/api/langgraph/*` runtime routes.
+FastAPI 应用程序提供 REST 端点以及公共 LangGraph 兼容 `/api/langgraph/*` 运行时路由。
 
-**Entry Point**: `app/gateway/app.py`
+**入口点**：`app/gateway/app.py`
 
-**Routers**:
-- `models.py` - `/api/models` - Model listing and details
-- `thread_runs.py` / `runs.py` - `/api/threads/{id}/runs`, `/api/runs/*` - LangGraph-compatible runs and streaming
-- `mcp.py` - `/api/mcp` - MCP server configuration
-- `skills.py` - `/api/skills` - Skills management
-- `uploads.py` - `/api/threads/{id}/uploads` - File upload
-- `threads.py` - `/api/threads/{id}` - Local DeerFlow thread data cleanup after LangGraph deletion
-- `artifacts.py` - `/api/threads/{id}/artifacts` - Artifact serving
-- `suggestions.py` - `/api/threads/{id}/suggestions` - Follow-up suggestion generation
+**路由器**：
+- `models.py`-`/api/models` - 型号列表和详细信息
+- `thread_runs.py`/`runs.py`-`/api/threads/{id}/runs`、`/api/runs/*` - LangGraph 兼容运行和流式传输
+- `mcp.py`-`/api/mcp` - MCP 服务器配置
+- `skills.py`-`/api/skills` - 技能管理
+- `uploads.py`-`/api/threads/{id}/uploads` - 文件上传
+- `threads.py`-`/api/threads/{id}` - LangGraph 删除后本地 DeerFlow 线程数据清理
+- `artifacts.py` - `/api/threads/{id}/artifacts` - 工件服务
+- `suggestions.py`-`/api/threads/{id}/suggestions` - 后续建议生成
 
-The web conversation delete flow first deletes Gateway-managed thread state through the LangGraph-compatible route, then the Gateway `threads.py` router removes DeerFlow-managed filesystem data via `Paths.delete_thread_dir()`.
+Web 会话删除流程首先通过 LangGraph 兼容路由删除网关管理的线程状态，然后网关 `threads.py`路由器通过`Paths.delete_thread_dir()` 删除 DeerFlow 管理的文件系统数据。
 
-### Agent Architecture
+### 代理架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -126,9 +126,9 @@ The web conversation delete flow first deletes Gateway-managed thread state thro
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Thread State
+### 线程状态
 
-The `ThreadState` extends LangGraph's `AgentState` with additional fields:
+`ThreadState`使用附加字段扩展了 LangGraph 的`AgentState`：
 
 ```python
 class ThreadState(AgentState):
@@ -144,7 +144,7 @@ class ThreadState(AgentState):
     viewed_images: dict       # Vision model image data
 ```
 
-### Sandbox System
+### 沙盒系统
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -179,16 +179,16 @@ class ThreadState(AgentState):
                       └─────────────────────────┘
 ```
 
-**Virtual Path Mapping**:
+**虚拟路径映射**：
 
-| Virtual Path | Physical Path |
+| 虚拟路径 | 物理路径 |
 |-------------|---------------|
 | `/mnt/user-data/workspace` | `backend/.deer-flow/threads/{thread_id}/user-data/workspace` |
 | `/mnt/user-data/uploads` | `backend/.deer-flow/threads/{thread_id}/user-data/uploads` |
 | `/mnt/user-data/outputs` | `backend/.deer-flow/threads/{thread_id}/user-data/outputs` |
 | `/mnt/skills` | `deer-flow/skills/` |
 
-### Tool System
+### 工具系统
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -217,7 +217,7 @@ class ThreadState(AgentState):
                       └─────────────────────────┘
 ```
 
-### Model Factory
+### 模型工厂
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -258,13 +258,13 @@ config.yaml:
                       └─────────────────────────┘
 ```
 
-**Supported Providers**:
+**支持的提供商**：
 - OpenAI (`langchain_openai:ChatOpenAI`)
-- Anthropic (`langchain_anthropic:ChatAnthropic`)
+- 人类 (`langchain_anthropic:ChatAnthropic`)
 - DeepSeek (`langchain_deepseek:ChatDeepSeek`)
-- Custom via LangChain integrations
+- 通过 LangChain 集成自定义
 
-### MCP Integration
+### MCP 集成
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -302,7 +302,7 @@ extensions_config.json:
        └───────────┘        └───────────┘        └───────────┘
 ```
 
-### Skills System
+### 技能系统
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -341,7 +341,7 @@ SKILL.md Format:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Request Flow
+### 请求流程
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -379,9 +379,9 @@ SKILL.md Format:
 4. Client receives streaming response
 ```
 
-## Data Flow
+## 数据流
 
-### File Upload Flow
+### 文件上传流程
 
 ```
 1. Client uploads file
@@ -409,7 +409,7 @@ SKILL.md Format:
    - Agent can access via virtual_path
 ```
 
-### Thread Cleanup Flow
+### 线程清理流程
 
 ```
 1. Client deletes conversation via the LangGraph-compatible Gateway route
@@ -424,7 +424,7 @@ SKILL.md Format:
    - Invalid thread IDs are rejected before filesystem access
 ```
 
-### Configuration Reload
+### 配置重新加载
 
 ```
 1. Client updates MCP config
@@ -442,43 +442,43 @@ SKILL.md Format:
 4. Next agent run uses new tools
 ```
 
-## Security Considerations
+## 安全考虑
 
-### Sandbox Isolation
+### 沙箱隔离
 
-- Agent code executes within sandbox boundaries
-- Local sandbox: Direct execution (development only)
-- Docker sandbox: Container isolation (production recommended)
-- Path traversal prevention in file operations
+- 代理代码在沙箱边界内执行
+- 本地沙箱：直接执行（仅限开发）
+- Docker沙箱：容器隔离（推荐生产）
+- 文件操作中防止路径遍历
 
-### API Security
+### API 安全
 
-- Thread isolation: Each thread has separate data directories
-- File validation: Uploads checked for path safety
-- Environment variable resolution: Secrets not stored in config
+- 线程隔离：每个线程都有独立的数据目录
+- 文件验证：检查上传的路径安全性
+- 环境变量解析：秘密未存储在配置中
 
-### MCP Security
+### MCP 安全
 
-- Each MCP server runs in its own process
-- Environment variables resolved at runtime
-- Servers can be enabled/disabled independently
+- 每个 MCP 服务器都在自己的进程中运行
+- 运行时解析的环境变量
+- 服务器可以独立 enabled/disabled
 
-## Performance Considerations
+## 性能考虑因素
 
-### Caching
+### 缓存
 
-- MCP tools cached with file mtime invalidation
-- Configuration loaded once, reloaded on file change
-- Skills parsed once at startup, cached in memory
+- MCP 工具通过文件 mtime 失效进行缓存
+- 配置加载一次，文件更改时重新加载
+- 技能在启动时解析一次，缓存在内存中
 
-### Streaming
+### 流媒体
 
-- SSE used for real-time response streaming
-- Reduces time to first token
-- Enables progress visibility for long operations
+- SSE 用于实时响应流
+- 减少第一个令牌的时间
+- 实现长时间操作的进度可见性
 
-### Context Management
+### 上下文管理
 
-- Summarization middleware reduces context when limits approached
-- Configurable triggers: tokens, messages, or fraction
-- Preserves recent messages while summarizing older ones
+- 当接近限制时，摘要中间件会减少上下文
+- 可配置的触发器：令牌、消息或分数
+- 保留最近的消息，同时总结较旧的消息

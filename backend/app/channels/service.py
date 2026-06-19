@@ -111,12 +111,15 @@ class ChannelService:
         if self._running:
             return
 
+        # 先启动消息调度器（ChannelManager）
         await self.manager.start()
 
+        # 遍历所有渠道配置，只启动 enabled=true 且有凭据的渠道
         for name, channel_config in self._config.items():
             if not isinstance(channel_config, dict):
                 continue
             if not channel_config.get("enabled", False):
+                # 渠道未启用但有凭据时给出提示，避免用户配置了凭据却忘记开启
                 cred_keys = _CHANNEL_CREDENTIAL_KEYS.get(name, [])
                 has_creds = any(not isinstance(channel_config.get(k), bool) and channel_config.get(k) is not None and str(channel_config[k]).strip() for k in cred_keys)
                 if has_creds:

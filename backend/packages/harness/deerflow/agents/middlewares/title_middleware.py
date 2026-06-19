@@ -1,4 +1,25 @@
-"""用于自动生成线程标题的中间件。"""
+"""用于自动生成线程标题的中间件。
+
+在首轮完整对话结束后（用户提问 + AI 回复完成），用轻量 LLM 调用生成标题：
+
+```
+用户: "帮我用 Python 写一个快速排序"
+Agent: [回复...]
+  ↓ after_agent 钩子触发
+TitleMiddleware:
+  1. 检查 state.title 是否已存在 → 是 → 跳过
+  2. 检查是否至少有 1 轮完整交换 → 否 → 跳过
+  3. 提取首条 HumanMessage + 对应 AIMessage 内容
+  4. normalize_message_content() → 将 list 结构展平为纯文本
+  5. 调用标题模型 (model.invoke) → "Python 快速排序实现"
+  6. 写入 state.title → 前端侧栏显示
+```
+
+配置项（``config.yaml → title``）：
+- ``enabled``: 开关
+- ``max_words``: 标题最大词数（默认 8）
+- ``max_chars``: 标题最大字符数（默认 80）
+- ``prompt_template``: 自定义标题生成提示模板"""
 
 
 import logging

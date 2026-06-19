@@ -41,6 +41,37 @@ def test_make_lead_agent_signature_matches_langgraph_server_factory_abi():
     assert list(inspect.signature(lead_agent_module.make_lead_agent).parameters) == ["config"]
 
 
+def test_get_runtime_config_merges_configurable_and_context():
+    app_config = object()
+
+    result = lead_agent_module._get_runtime_config(
+        {
+            "configurable": {
+                "thread_id": "from-configurable",
+                "model_name": "safe-model",
+            },
+            "context": {
+                "thread_id": "from-context",
+                "run_id": "run-1",
+                "app_config": app_config,
+            },
+        }
+    )
+
+    assert result == {
+        "thread_id": "from-context",
+        "model_name": "safe-model",
+        "run_id": "run-1",
+        "app_config": app_config,
+    }
+
+
+def test_get_runtime_config_ignores_missing_or_non_mapping_sections():
+    assert lead_agent_module._get_runtime_config({}) == {}
+    assert lead_agent_module._get_runtime_config({"configurable": None, "context": None}) == {}
+    assert lead_agent_module._get_runtime_config({"configurable": "bad", "context": ["bad"]}) == {}
+
+
 def test_make_lead_agent_attaches_tracing_callbacks_at_graph_root(monkeypatch):
     """Regression guard: tracing handlers must be appended to
     ``config["callbacks"]`` (graph invocation root), and every in-graph
@@ -293,7 +324,7 @@ def test_make_lead_agent_rejects_invalid_bootstrap_agent_name(monkeypatch):
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
 
-    with pytest.raises(ValueError, match="Invalid agent name"):
+    with pytest.raises(ValueError, match="(Invalid agent name|agent 名称 .* 非法)"):
         lead_agent_module.make_lead_agent(
             {
                 "configurable": {

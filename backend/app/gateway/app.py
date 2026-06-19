@@ -140,6 +140,8 @@ async def _migrate_orphaned_threads(store, admin_user_id: str) -> int:
 
     migrated = 0
     async for item in _iter_store_items(store, ("threads",)):
+        if item.value is None:
+            continue
         metadata = item.value.get("metadata", {})
         if not metadata.get("user_id"):
             metadata["user_id"] = admin_user_id

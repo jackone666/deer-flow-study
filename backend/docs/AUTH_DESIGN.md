@@ -182,7 +182,7 @@ auth bootstrap 端点（login/register/initialize/logout）不要求 double-subm
 
 ## 用户隔离
 
-### Thread metadata
+### 线程元数据
 
 Thread metadata 存在 `threads_meta`，关键隔离字段是 `user_id`。
 
@@ -219,7 +219,7 @@ agent 在 sandbox 内看到统一虚拟路径：
 
 `ThreadDataMiddleware` 使用 `get_effective_user_id()` 解析当前用户并生成线程路径。没有认证上下文时会落到 `default` 用户桶，主要用于内部调用、嵌入式 client 或无 HTTP 的本地执行路径。
 
-### Memory
+### 内存
 
 默认 memory 存储：
 
@@ -302,7 +302,7 @@ PYTHONPATH=. python scripts/migrate_user_isolation.py --user-id <target-user-id>
 | 边界 | 当前行为 | 后续方向 |
 |---|---|---|
 | 无 admin 时注册普通用户 | 允许注册普通 `user` | 如产品要求先初始化 admin，给 `/register` 加 gate |
-| 登录限速 | 进程内 dict，单 worker 精确，多 worker 近似 | Redis / DB-backed rate limiter |
+| 登录限速 | 进程内 dict，单 worker 精确，多 worker 近似 | Redis / DB 支持的速率限制器 |
 | OAuth | 端点占位，未实现 | 接入 provider 并统一 `token_version` / role 语义 |
 | IM 用户隔离 | channel 使用 `default` 内部用户 | 建立外部用户到 DeerFlow user 的映射 |
 | 绝对 memory path | 显式共享 memory | UI / docs 明确提示 opt-out 风险 |
@@ -319,11 +319,11 @@ PYTHONPATH=. python scripts/migrate_user_isolation.py --user-id <target-user-id>
 | `app/gateway/auth/credential_file.py` | 0600 凭据文件写入 |
 | `app/gateway/authz.py` | 路由权限与 owner check |
 | `deerflow/runtime/user_context.py` | 当前用户 ContextVar 与 `AUTO` sentinel |
-| `deerflow/persistence/thread_meta/` | thread metadata owner filter |
-| `deerflow/config/paths.py` | per-user filesystem layout |
+| `deerflow/persistence/thread_meta/` | 线程元数据所有者过滤器 |
+| `deerflow/config/paths.py` | 每用户文件系统布局 |
 | `deerflow/agents/middlewares/thread_data_middleware.py` | run 时解析用户线程目录 |
-| `deerflow/agents/memory/storage.py` | per-user memory storage |
-| `deerflow/config/agents_config.py` | per-user custom agents |
+| `deerflow/agents/memory/storage.py` | 每用户内存存储 |
+| `deerflow/config/agents_config.py` | 每用户自定义代理 |
 | `app/channels/manager.py` | IM channel 内部认证调用 |
 | `scripts/migrate_user_isolation.py` | legacy 数据迁移到 per-user layout |
 | `.deer-flow/data/deerflow.db` | 统一 SQLite 数据库，包含 users / threads_meta / runs / feedback 等表 |

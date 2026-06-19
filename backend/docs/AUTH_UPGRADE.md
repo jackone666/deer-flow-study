@@ -1,4 +1,4 @@
-# Authentication Upgrade Guide
+# 认证升级指南
 
 DeerFlow 内置了认证模块。本文档面向从无认证版本升级的用户。
 
@@ -58,9 +58,9 @@ make dev
 | 机制 | 说明 |
 |------|------|
 | JWT HttpOnly Cookie | Token 不暴露给 JavaScript，防止 XSS 窃取 |
-| CSRF Double Submit Cookie | 受保护的 POST/PUT/PATCH/DELETE 请求需携带 `X-CSRF-Token`；登录/注册/初始化/登出走 auth 端点 Origin 校验 |
+| CSRF 双重提交 Cookie | 受保护的 POST/PUT/PATCH/DELETE 请求需携带 `X-CSRF-Token`；登录/注册/初始化/登出走 auth 端点 Origin 校验 |
 | bcrypt 密码哈希 | 密码不以明文存储 |
-| Thread owner filter | `threads_meta.user_id` 由服务端认证上下文写入，搜索、读取、更新、删除默认按当前用户过滤 |
+| 线程所有者过滤器 | `threads_meta.user_id` 由服务端认证上下文写入，搜索、读取、更新、删除默认按当前用户过滤 |
 | 文件系统隔离 | 线程数据写入 `{base_dir}/users/{user_id}/threads/{thread_id}/user-data/`，sandbox 内统一映射为 `/mnt/user-data/` |
 | Memory / agent 隔离 | 用户 memory 和自定义 agent 写入 `{base_dir}/users/{user_id}/...`；旧共享 agent 只作为只读兼容回退 |
 | HTTPS 自适应 | 检测 `x-forwarded-proto`，自动设置 `Secure` cookie 标志 |

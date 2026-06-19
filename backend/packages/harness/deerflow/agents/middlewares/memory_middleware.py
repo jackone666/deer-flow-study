@@ -1,4 +1,24 @@
-"""用于记忆机制的中间件。"""
+"""用于记忆机制的中间件。
+
+在每次 Agent 完成后将筛选后的会话入队等待 LLM 记忆更新：
+
+```
+Agent 完成一轮对话（after_agent 钩子触发）
+       ↓
+1. 检查 memory.enabled → 否 → 跳过
+2. 获取 thread_id（runtime.context → config.configurable 回退）
+3. filter_messages_for_memory() → 仅保留人类输入 + 最终 AI 回复
+4. 检查是否同时存在用户消息和 AI 回复 → 否 → 跳过
+5. detect_correction() / detect_reinforcement() → 信号检测
+6. get_effective_user_id() → user_id（在 ContextVar 存活时捕获）
+7. queue.add(thread_id, messages, user_id=...) → 入队去抖
+       ↓
+30s 后队列触发 → MemoryUpdater.update_memory() → LLM 提取事实 → memory.json
+```
+
+关键设计决策：
+- 使用 ``add()``（非 ``add_nowait()``）：正常对话结束后允许去抖合并，避免高频触发
+- user_id 在入队时**立即**捕获（第 99 行），因为 ``threading.Timer`` 在新线程触发时不继承 ContextVar"""
 
 
 import logging

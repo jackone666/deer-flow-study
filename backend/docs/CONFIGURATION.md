@@ -1,25 +1,25 @@
-# Configuration Guide
+# 配置指南
 
-This guide explains how to configure DeerFlow for your environment.
+本指南说明如何为您的环境配置 DeerFlow。
 
-## Config Versioning
+## 配置版本控制
 
-`config.example.yaml` contains a `config_version` field that tracks schema changes. When the example version is higher than your local `config.yaml`, the application emits a startup warning:
+`config.example.yaml`包含一个`config_version`字段，用于跟踪架构更改。当示例版本高于本地`config.yaml` 时，应用程序会发出启动警告：
 
 ```
 WARNING - Your config.yaml (version 0) is outdated — the latest version is 1.
 Run `make config-upgrade` to merge new fields into your config.
 ```
 
-- **Missing `config_version`** in your config is treated as version 0.
-- Run `make config-upgrade` to auto-merge missing fields (your existing values are preserved, a `.bak` backup is created).
-- When changing the config schema, bump `config_version` in `config.example.yaml`.
+- **配置中缺少 `config_version`** 将被视为版本 0。
+- 运行 `make config-upgrade`自动合并缺失字段（保留现有值，创建`.bak` 备份）。
+- 更改配置架构时，将 `config_version`更改为`config.example.yaml`。
 
-## Configuration Sections
+## 配置部分
 
-### Models
+### 模型
 
-Configure the LLM models available to the agent:
+配置代理可用的 LLM 模型：
 
 ```yaml
 models:
@@ -32,16 +32,16 @@ models:
     temperature: 0.7               # Sampling temperature
 ```
 
-**Supported Providers**:
+**支持的提供商**：
 - OpenAI (`langchain_openai:ChatOpenAI`)
-- Anthropic (`langchain_anthropic:ChatAnthropic`)
+- 人类 (`langchain_anthropic:ChatAnthropic`)
 - DeepSeek (`langchain_deepseek:ChatDeepSeek`)
-- Xiaomi MiMo (`deerflow.models.patched_mimo:PatchedChatMiMo`)
+- 小米MiMo (`deerflow.models.patched_mimo:PatchedChatMiMo`)
 - Claude Code OAuth (`deerflow.models.claude_provider:ClaudeChatModel`)
-- Codex CLI (`deerflow.models.openai_codex_provider:CodexChatModel`)
-- Any LangChain-compatible provider
+- 法典 CLI (`deerflow.models.openai_codex_provider:CodexChatModel`)
+- 任何 LangChain 兼容的提供商
 
-CLI-backed provider examples:
+CLI 支持的提供商示例：
 
 ```yaml
 models:
@@ -60,13 +60,13 @@ models:
     supports_thinking: true
 ```
 
-**Auth behavior for CLI-backed providers**:
-- `CodexChatModel` loads Codex CLI auth from `~/.codex/auth.json`
-- The Codex Responses endpoint currently rejects `max_tokens` and `max_output_tokens`, so `CodexChatModel` does not expose a request-level token cap
-- `ClaudeChatModel` accepts `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_CREDENTIALS_PATH`, or plaintext `~/.claude/.credentials.json`
-- On macOS, DeerFlow does not probe Keychain automatically. Use `scripts/export_claude_code_oauth.py` to export Claude Code auth explicitly when needed
+**CLI 支持的提供商的身份验证行为**：
+- `CodexChatModel`从`~/.codex/auth.json` 加载 Codex CLI auth
+- Codex 响应端点当前拒绝 `max_tokens`和`max_output_tokens`，因此 `CodexChatModel` 不会公开请求级别的令牌上限
+- `ClaudeChatModel`接受`CLAUDE_CODE_OAUTH_TOKEN`、`ANTHROPIC_AUTH_TOKEN`、`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`、`CLAUDE_CODE_CREDENTIALS_PATH`或明文`~/.claude/.credentials.json`
+- 在 macOS 上，DeerFlow 不会自动探测钥匙串。需要时使用 `scripts/export_claude_code_oauth.py` 显式导出 Claude Code auth
 
-To use OpenAI's `/v1/responses` endpoint with LangChain, keep using `langchain_openai:ChatOpenAI` and set:
+要将 OpenAI 的 `/v1/responses`端点与 LangChain 一起使用，请继续使用`langchain_openai:ChatOpenAI` 并设置：
 
 ```yaml
 models:
@@ -79,7 +79,7 @@ models:
     output_version: responses/v1
 ```
 
-For OpenAI-compatible gateways (for example Novita or OpenRouter), keep using `langchain_openai:ChatOpenAI` and set `base_url`:
+对于 OpenAI 兼容网关（例如 Novita 或 OpenRouter），继续使用 `langchain_openai:ChatOpenAI`并设置`base_url`：
 
 ```yaml
 models:
@@ -132,10 +132,10 @@ models:
     base_url: https://openrouter.ai/api/v1
 ```
 
-If your OpenRouter key lives in a different environment variable name, point `api_key` at that variable explicitly (for example `api_key: $OPENROUTER_API_KEY`).
+如果您的 OpenRouter 键位于不同的环境变量名称中，请将 `api_key`显式指向该变量（例如`api_key: $OPENROUTER_API_KEY`）。
 
-**Thinking Models**:
-Some models support "thinking" mode for complex reasoning:
+**思维模型**：
+某些模型支持“思考”模式进行复杂推理：
 
 ```yaml
 models:
@@ -147,16 +147,16 @@ models:
           type: enabled
 ```
 
-**Gemini with thinking via OpenAI-compatible gateway**:
+**Gemini 通过 OpenAI 兼容网关进行思考**：
 
-When routing Gemini through an OpenAI-compatible proxy (Vertex AI OpenAI compat endpoint, AI Studio, or third-party gateways) with thinking enabled, the API attaches a `thought_signature` to each tool-call object returned in the response.  Every subsequent request that replays those assistant messages **must** echo those signatures back on the tool-call entries or the API returns:
+在启用思考的情况下通过 OpenAI 兼容代理（Vertex AI OpenAI 兼容端点、AI Studio 或第三方网关）路由 Gemini 时，API 将 `thought_signature` 附加到响应中返回的每个工具调用对象。  每个重播这些辅助消息的后续请求**必须**在工具调用条目上回显这些签名，否则 API 返回：
 
 ```
 HTTP 400 INVALID_ARGUMENT: function call `<tool>` in the N. content block is
 missing a `thought_signature`.
 ```
 
-Standard `langchain_openai:ChatOpenAI` silently drops `thought_signature` when serialising messages.  Use `deerflow.models.patched_openai:PatchedChatOpenAI` instead — it re-injects the tool-call signatures (sourced from `AIMessage.additional_kwargs["tool_calls"]`) into every outgoing payload:
+标准 `langchain_openai:ChatOpenAI`在序列化消息时默默地删除`thought_signature`。  使用 `deerflow.models.patched_openai:PatchedChatOpenAI`代替 — 它将工具调用签名（源自`AIMessage.additional_kwargs["tool_calls"]`）重新注入到每个传出的有效负载中：
 
 ```yaml
 models:
@@ -175,15 +175,15 @@ models:
           type: enabled
 ```
 
-For Gemini accessed **without** thinking (e.g. via OpenRouter where thinking is not activated), the plain `langchain_openai:ChatOpenAI` with `supports_thinking: false` is sufficient and no patch is needed.
+对于**不启用 thinking** 的 Gemini 访问（例如通过 OpenRouter 且未激活 thinking），带有 `supports_thinking: false` 的普通 `langchain_openai:ChatOpenAI` 就足够了，不需要补丁。
 
-**MiMo with thinking via OpenAI-compatible API**:
+**MiMo 通过 OpenAI 兼容 API** 进行思考：
 
-MiMo returns `reasoning_content` on assistant messages in thinking mode. In multi-turn agent conversations with tool calls, subsequent requests must preserve that historical `reasoning_content` on assistant messages or the MiMo API can return HTTP 400. Standard `langchain_openai:ChatOpenAI` drops this provider-specific field, so use `deerflow.models.patched_mimo:PatchedChatMiMo`:
+MiMo 在思维模式下的辅助消息上返回 `reasoning_content`。在使用工具调用的多轮代理对话中，后续请求必须保留助理消息上的历史 `reasoning_content`，否则 MiMo API 可以返回 HTTP 400。标准 `langchain_openai:ChatOpenAI`会删除此特定于提供程序的字段，因此使用`deerflow.models.patched_mimo:PatchedChatMiMo`：
 
-For pay-as-you-go API keys (`sk-...`), use `https://api.xiaomimimo.com/v1`. For Token Plan keys (`tp-...`), use the regional Token Plan Base URL shown in the MiMo console, such as `https://token-plan-cn.xiaomimimo.com/v1`. MiMo documents these key types as separate and non-interchangeable.
+对于即用即付 API 密钥 (`sk-...`)，请使用 `https://api.xiaomimimo.com/v1`。对于令牌计划密钥 (`tp-...`)，请使用 MiMo 控制台中显示的区域令牌计划基础 URL，例如 `https://token-plan-cn.xiaomimimo.com/v1`。 MiMo 将这些密钥类型记录为单独且不可互换的。
 
-`PatchedChatMiMo` is model-id agnostic. Use it for every MiMo thinking model entry you configure, including model entries referenced by `subagents.*.model` overrides (for example `mimo-v2.5-pro`, `mimo-v2.5`, `mimo-v2-pro`, `mimo-v2-omni`, or `mimo-v2-flash`).
+`PatchedChatMiMo`与模型 ID 无关。将其用于您配置的每个 MiMo 思维模型条目，包括`subagents.*.model`覆盖引用的模型条目（例如`mimo-v2.5-pro`、`mimo-v2.5`、`mimo-v2-pro`、`mimo-v2-omni`或`mimo-v2-flash`）。
 
 ```yaml
 models:
@@ -206,11 +206,11 @@ models:
           type: disabled
 ```
 
-`PatchedChatMiMo` preserves MiMo's `choices[].message.reasoning_content`, streaming `delta.reasoning_content`, and request-history assistant `reasoning_content` fields. It does not reuse the DeepSeek provider.
+`PatchedChatMiMo`保留 MiMo 的`choices[].message.reasoning_content`、流式 `delta.reasoning_content`和请求历史记录助手`reasoning_content` 字段。它不会重用 DeepSeek 提供程序。
 
-### Tool Groups
+### 工具组
 
-Organize tools into logical groups:
+将工具组织成逻辑组：
 
 ```yaml
 tool_groups:
@@ -220,9 +220,9 @@ tool_groups:
   - name: bash         # Shell command execution
 ```
 
-### Tools
+### 工具
 
-Configure specific tools available to the agent:
+配置代理可用的特定工具：
 
 ```yaml
 tools:
@@ -233,35 +233,35 @@ tools:
     # api_key: $TAVILY_API_KEY  # Optional
 ```
 
-**Built-in Tools**:
-- `web_search` - Search the web (DuckDuckGo, Tavily, Exa, InfoQuest, Firecrawl)
-- `web_fetch` - Fetch web pages (Jina AI, Exa, InfoQuest, Firecrawl)
-- `ls` - List directory contents
-- `read_file` - Read file contents
-- `write_file` - Write file contents
-- `str_replace` - String replacement in files
-- `bash` - Execute bash commands
+**内置工具**：
+- `web_search` - 搜索网络（DuckDuckGo、Tavily、Exa、InfoQuest、Firecrawl）
+- `web_fetch` - 获取网页（Jina AI、Exa、InfoQuest、Firecrawl）
+- `ls` - 列出目录内容
+- `read_file` - 读取文件内容
+- `write_file` - 写入文件内容
+- `str_replace` - 文件中的字符串替换
+- `bash` - 执行 bash 命令
 
-### Sandbox
+### 沙盒
 
-DeerFlow supports multiple sandbox execution modes. Configure your preferred mode in `config.yaml`:
+DeerFlow 支持多种沙箱执行模式。在 `config.yaml` 中配置您的首选模式：
 
-**Local Execution** (runs sandbox code directly on the host machine):
+**本地执行**（直接在主机上运行沙箱代码）：
 ```yaml
 sandbox:
    use: deerflow.sandbox.local:LocalSandboxProvider # Local execution
    allow_host_bash: false # default; host bash is disabled unless explicitly re-enabled
 ```
 
-**Docker Execution** (runs sandbox code in isolated Docker containers):
+**Docker 执行**（在隔离的 Docker 容器中运行沙箱代码）：
 ```yaml
 sandbox:
    use: deerflow.community.aio_sandbox:AioSandboxProvider # Docker-based sandbox
 ```
 
-**Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service):
+**使用 Kubernetes 进行 Docker 执行**（通过配置服务在 Kubernetes pod 中运行沙箱代码）：
 
-This mode runs each sandbox in an isolated Kubernetes Pod on your **host machine's cluster**. Requires Docker Desktop K8s, OrbStack, or similar local K8s setup.
+此模式在 **主机集群** 上的隔离 Kubernetes Pod 中运行每个沙箱。需要 Docker Desktop K8s、OrbStack 或类似的本地 K8s 设置。
 
 ```yaml
 sandbox:
@@ -269,22 +269,22 @@ sandbox:
    provisioner_url: http://provisioner:8002
 ```
 
-When using Docker development (`make docker-start`), DeerFlow starts the `provisioner` service only if this provisioner mode is configured. In local or plain Docker sandbox modes, `provisioner` is skipped.
+使用 Docker 开发（`make docker-start`）时，仅当配置了此配置程序模式时，DeerFlow 才会启动 `provisioner`服务。在本地或普通 Docker 沙箱模式中，会跳过`provisioner`。
 
-See [Provisioner Setup Guide](../../docker/provisioner/README.md) for detailed configuration, prerequisites, and troubleshooting.
+有关详细配置、先决条件和故障排除，请参阅 [Provisioner Setup Guide](../../docker/provisioner/README.md)。
 
-Choose between local execution or Docker-based isolation:
+选择本地执行或基于 Docker 的隔离：
 
-**Option 1: Local Sandbox** (default, simpler setup):
+**选项 1：本地沙箱**（默认，更简单的设置）：
 ```yaml
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
   allow_host_bash: false
 ```
 
-`allow_host_bash` is intentionally `false` by default. DeerFlow's local sandbox is a host-side convenience mode, not a secure shell isolation boundary. If you need `bash`, prefer `AioSandboxProvider`. Only set `allow_host_bash: true` for fully trusted single-user local workflows.
+`allow_host_bash`有意为`false`。 DeerFlow的本地沙箱是主机端便利模式，而不是安全的外壳隔离边界。如果您需要 `bash`，请优先选择 `AioSandboxProvider`。仅针对完全可信的单用户本地工作流程设置 `allow_host_bash: true`。
 
-**Option 2: Docker Sandbox** (isolated, more secure):
+**选项2：Docker Sandbox**（隔离，更安全）：
 ```yaml
 sandbox:
   use: deerflow.community.aio_sandbox:AioSandboxProvider
@@ -299,13 +299,13 @@ sandbox:
       read_only: false
 ```
 
-When you configure `sandbox.mounts`, DeerFlow exposes those `container_path` values in the agent prompt so the agent can discover and operate on mounted directories directly instead of assuming everything must live under `/mnt/user-data`.
+当您配置 `sandbox.mounts`时，DeerFlow 在代理提示中公开这些`container_path`值，以便代理可以直接发现并操作已安装的目录，而不是假设所有内容都必须位于`/mnt/user-data` 下。
 
-For bare-metal Docker sandbox runs that use localhost, DeerFlow binds the sandbox HTTP port to `127.0.0.1` by default so it is not exposed on every host interface. Docker-outside-of-Docker deployments that connect through `host.docker.internal` keep the broad legacy bind for compatibility. Set `DEER_FLOW_SANDBOX_BIND_HOST` explicitly if your deployment needs a different bind address.
+对于使用 localhost 的裸机 Docker 沙箱运行，DeerFlow 默认将沙箱 HTTP 端口绑定到 `127.0.0.1`，因此它不会在每个主机接口上公开。通过 `host.docker.internal`连接的 Docker-outside-of-Docker 部署保留了广泛的传统绑定以实现兼容性。如果您的部署需要不同的绑定地址，请显式设置`DEER_FLOW_SANDBOX_BIND_HOST`。
 
-### Skills
+### 技能
 
-Configure the skills directory for specialized workflows:
+配置专门工作流程的技能目录：
 
 ```yaml
 skills:
@@ -316,21 +316,21 @@ skills:
   container_path: /mnt/skills
 ```
 
-**How Skills Work**:
-- Skills are stored in `deer-flow/skills/{public,custom}/`
-- Each skill has a `SKILL.md` file with metadata
-- Skills are automatically discovered and loaded
-- Available in both local and Docker sandbox via path mapping
+**技能如何发挥作用**：
+- 技能存储在 `deer-flow/skills/{public,custom}/` 中
+- 每个技能都有一个包含元数据的 `SKILL.md` 文件
+- 技能自动发现并加载
+- 通过路径映射在本地和 Docker 沙箱中可用
 
-**Per-Agent Skill Filtering**:
-Custom agents can restrict which skills they load by defining a `skills` field in their `config.yaml` (located at `workspace/agents/<agent_name>/config.yaml`):
-- **Omitted or `null`**: Loads all globally enabled skills (default fallback).
-- **`[]` (empty list)**: Disables all skills for this specific agent.
-- **`["skill-name"]`**: Loads only the explicitly specified skills.
+**每座席技能过滤**：
+自定义代理可以通过在其 `config.yaml`（位于 `workspace/agents/<agent_name>/config.yaml`）中定义 `skills` 字段来限制他们加载的技能：
+- **省略或`null`**：加载所有全局启用的技能（默认后备）。
+- **`[]`（空列表）**：禁用该特定代理的所有技能。
+- **`["skill-name"]`**：仅加载明确指定的技能。
 
-### Title Generation
+### 标题生成
 
-Automatic conversation title generation:
+自动对话标题生成：
 
 ```yaml
 title:
@@ -340,80 +340,80 @@ title:
   model_name: null  # Use first model in list
 ```
 
-### GitHub API Token (Optional for GitHub Deep Research Skill)
+### GitHub API token（GitHub 深度研究技能可选）
 
-The default GitHub API rate limits are quite restrictive. For frequent project research, we recommend configuring a personal access token (PAT) with read-only permissions.
+默认的 GitHub API 速率限制非常严格。对于频繁的项目研究，我们建议配置具有只读权限的个人访问令牌（PAT）。
 
-**Configuration Steps**:
-1. Uncomment the `GITHUB_TOKEN` line in the `.env` file and add your personal access token
-2. Restart the DeerFlow service to apply changes
+**配置步骤**：
+1. 取消注释 `.env`文件中的`GITHUB_TOKEN` 行并添加您的个人访问令牌
+2. 重新启动 DeerFlow 服务以应用更改
 
-## Environment Variables
+## 环境变量
 
-DeerFlow supports environment variable substitution using the `$` prefix:
+DeerFlow 支持使用 `$` 前缀进行环境变量替换：
 
 ```yaml
 models:
   - api_key: $OPENAI_API_KEY  # Reads from environment
 ```
 
-**Common Environment Variables**:
-- `OPENAI_API_KEY` - OpenAI API key
-- `ANTHROPIC_API_KEY` - Anthropic API key
-- `DEEPSEEK_API_KEY` - DeepSeek API key
-- `MIMO_API_KEY` - Xiaomi MiMo API key
-- `NOVITA_API_KEY` - Novita API key (OpenAI-compatible endpoint)
-- `TAVILY_API_KEY` - Tavily search API key
-- `DEER_FLOW_PROJECT_ROOT` - Project root for relative runtime paths
-- `DEER_FLOW_CONFIG_PATH` - Custom config file path
-- `DEER_FLOW_EXTENSIONS_CONFIG_PATH` - Custom extensions config file path
-- `DEER_FLOW_HOME` - Runtime state directory (defaults to `.deer-flow` under the project root)
-- `DEER_FLOW_SKILLS_PATH` - Skills directory when `skills.path` is omitted
-- `GATEWAY_ENABLE_DOCS` - Set to `false` to disable Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) endpoints (default: `true`)
+**常用环境变量**：
+- `OPENAI_API_KEY` - OpenAI API 键
+- `ANTHROPIC_API_KEY` - 人择 API 键
+- `DEEPSEEK_API_KEY` - DeepSeek API 键
+- `MIMO_API_KEY` - 小米 MiMo API 键
+- `NOVITA_API_KEY` - Novita API 密钥（OpenAI 兼容端点）
+- `TAVILY_API_KEY` - 快速搜索 API 键
+- `DEER_FLOW_PROJECT_ROOT` - 相对运行时路径的项目根
+- `DEER_FLOW_CONFIG_PATH` - 自定义配置文件路径
+- `DEER_FLOW_EXTENSIONS_CONFIG_PATH` - 自定义扩展配置文件路径
+- `DEER_FLOW_HOME` - 运行时状态目录（默认为项目根目录下的`.deer-flow`）
+- `DEER_FLOW_SKILLS_PATH`- 省略`skills.path` 时的技能目录
+- `GATEWAY_ENABLE_DOCS`- 设置为`false` 以禁用 Swagger UI (`/docs`)、ReDoc (`/redoc`) 和 OpenAPI 架构 (`/openapi.json`) 端点（默认值：`true`）
 
-## Configuration Location
+## 配置位置
 
-The configuration file should be placed in the **project root directory** (`deer-flow/config.yaml`). Set `DEER_FLOW_PROJECT_ROOT` when the process may start from another working directory, or set `DEER_FLOW_CONFIG_PATH` to point at a specific file.
+配置文件应放置在**项目根目录**（`deer-flow/config.yaml`）中。当进程可能从另一个工作目录启动时设置 `DEER_FLOW_PROJECT_ROOT`，或设置`DEER_FLOW_CONFIG_PATH` 指向特定文件。
 
-## Configuration Priority
+## 配置优先级
 
-DeerFlow searches for configuration in this order:
+DeerFlow 按以下顺序搜索配置：
 
-1. Path specified in code via `config_path` argument
-2. Path from `DEER_FLOW_CONFIG_PATH` environment variable
-3. `config.yaml` under `DEER_FLOW_PROJECT_ROOT`, or under the current working directory when `DEER_FLOW_PROJECT_ROOT` is unset
-4. Legacy backend/repository-root locations for monorepo compatibility
+1. 通过 `config_path` 参数在代码中指定的路径
+2. `DEER_FLOW_CONFIG_PATH` 环境变量的路径
+3. `config.yaml`在`DEER_FLOW_PROJECT_ROOT`下，或者当`DEER_FLOW_PROJECT_ROOT` 未设置时在当前工作目录下
+4. 传统 backend/repository-root 位置以实现单一存储库兼容性
 
-## Best Practices
+## 最佳实践
 
-1. **Place `config.yaml` in project root** - Set `DEER_FLOW_PROJECT_ROOT` if the runtime starts elsewhere
-2. **Never commit `config.yaml`** - It's already in `.gitignore`
-3. **Use environment variables for secrets** - Don't hardcode API keys
-4. **Keep `config.example.yaml` updated** - Document all new options
-5. **Test configuration changes locally** - Before deploying
-6. **Use Docker sandbox for production** - Better isolation and security
+1. **将 `config.yaml`放在项目根目录中** - 如果运行时在其他地方启动，则设置`DEER_FLOW_PROJECT_ROOT`
+2. **永远不要提交 `config.yaml`** - 它已经在 `.gitignore` 中
+3. **使用环境变量作为机密** - 不要硬编码 API 键
+4. **保持 `config.example.yaml` 更新** - 记录所有新选项
+5. **在本地测试配置更改** - 部署之前
+6. **使用 Docker 沙箱进行生产** - 更好的隔离和安全性
 
-## Troubleshooting
+## 故障排除
 
-### "Config file not found"
-- Ensure `config.yaml` exists in the **project root** directory (`deer-flow/config.yaml`)
-- If the runtime starts outside the project root, set `DEER_FLOW_PROJECT_ROOT`
-- Alternatively, set `DEER_FLOW_CONFIG_PATH` environment variable to custom location
+### “未找到配置文件”
+- 确保 `config.yaml` 存在于 **项目根** 目录中 (`deer-flow/config.yaml`)
+- 如果运行时在项目根目录之外启动，则设置 `DEER_FLOW_PROJECT_ROOT`
+- 或者，将 `DEER_FLOW_CONFIG_PATH` 环境变量设置为自定义位置
 
-### "Invalid API key"
-- Verify environment variables are set correctly
-- Check that `$` prefix is used for env var references
+### “无效的API密钥”
+- 验证环境变量设置正确
+- 检查 `$` 前缀是否用于环境变量引用
 
-### "Skills not loading"
-- Check that `deer-flow/skills/` directory exists
-- Verify skills have valid `SKILL.md` files
-- Check `skills.path` or `DEER_FLOW_SKILLS_PATH` if using a custom path
+### “技能未加载”
+- 检查 `deer-flow/skills/` 目录是否存在
+- 验证技能是否具有有效的 `SKILL.md` 文件
+- 如果使用自定义路径，请检查 `skills.path`或`DEER_FLOW_SKILLS_PATH`
 
-### "Docker sandbox fails to start"
-- Ensure Docker is running
-- Check port 8080 (or configured port) is available
-- Verify Docker image is accessible
+### “Docker沙箱启动失败”
+- 确保 Docker 正在运行
+- 检查端口 8080（或配置的端口）是否可用
+- 验证 Docker 镜像是否可访问
 
-## Examples
+## 示例
 
-See `config.example.yaml` for complete examples of all configuration options.
+有关所有配置选项的完整示例，请参阅 `config.example.yaml`。

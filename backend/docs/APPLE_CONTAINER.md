@@ -1,35 +1,35 @@
-# Apple Container Support
+# Apple 容器支持
 
-DeerFlow now supports Apple Container as the preferred container runtime on macOS, with automatic fallback to Docker.
+DeerFlow 现在支持 Apple Container 作为 macOS 上的首选容器运行时，并自动回退到 Docker。
 
-## Overview
+## 概述
 
-Starting with this version, DeerFlow automatically detects and uses Apple Container on macOS when available, falling back to Docker when:
-- Apple Container is not installed
-- Running on non-macOS platforms
+从这个版本开始，DeerFlow 自动检测并使用 macOS 上的 Apple 容器（如果可用），在以下情况下回退到 Docker：
+- Apple 容器未安装
+- 在非 macOS 平台上运行
 
-This provides better performance on Apple Silicon Macs while maintaining compatibility across all platforms.
+这可以在 Apple Silicon Mac 上提供更好的性能，同时保持跨所有平台的兼容性。
 
-## Benefits
+## 好处
 
-### On Apple Silicon Macs with Apple Container:
-- **Better Performance**: Native ARM64 execution without Rosetta 2 translation
-- **Lower Resource Usage**: Lighter weight than Docker Desktop
-- **Native Integration**: Uses macOS Virtualization.framework
+### 在带有 Apple Container 的 Apple Silicon Mac 上：
+- **更好的性能**：本机 ARM64 执行，无需 Rosetta 2 转换
+- **较低的资源使用**：比 Docker Desktop 更轻
+- **本机集成**：使用 macOS Virtualization.framework
 
-### Fallback to Docker:
-- Full backward compatibility
-- Works on all platforms (macOS, Linux, Windows)
-- No configuration changes needed
+### 回退到 Docker：
+- 完全向后兼容
+- 适用于所有平台（macOS、Linux、Windows）
+- 无需更改配置
 
-## Requirements
+## 要求
 
-### For Apple Container (macOS only):
-- macOS 15.0 or later
-- Apple Silicon (M1/M2/M3/M4)
-- Apple Container CLI installed
+### 对于 Apple 容器（仅限 macOS）：
+- macOS 15.0 或更高版本
+- 苹果硅 (M1/M2/M3/M4)
+- Apple 容器 CLI 已安装
 
-### Installation:
+### 安装：
 ```bash
 # Download from GitHub releases
 # https://github.com/apple/container/releases
@@ -41,26 +41,26 @@ container --version
 container system start
 ```
 
-### For Docker (all platforms):
-- Docker Desktop or Docker Engine
+### 对于 Docker（所有平台）：
+- Docker 桌面或 Docker 引擎
 
-## How It Works
+## 它是如何运作的
 
-### Automatic Detection
+### 自动检测
 
-The `AioSandboxProvider` automatically detects the available container runtime:
+`AioSandboxProvider` 自动检测可用的容器运行时：
 
-1. On macOS: Try `container --version`
-   - Success → Use Apple Container
-   - Failure → Fall back to Docker
+1. 在 macOS 上：尝试 `container --version`
+   - 成功 → 使用 Apple 容器
+   - 失败 → 回退到 Docker
 
-2. On other platforms: Use Docker directly
+2. 其他平台：直接使用Docker
 
-### Runtime Differences
+### 运行时差异
 
-Both runtimes use nearly identical command syntax:
+两个运行时使用几乎相同的命令语法：
 
-**Container Startup:**
+**容器启动：**
 ```bash
 # Apple Container
 container run --rm -d -p 8080:8080 -v /host:/container -e KEY=value image
@@ -69,7 +69,7 @@ container run --rm -d -p 8080:8080 -v /host:/container -e KEY=value image
 docker run --rm -d -p 8080:8080 -v /host:/container -e KEY=value image
 ```
 
-**Container Cleanup:**
+**容器清理：**
 ```bash
 # Apple Container (with --rm flag)
 container stop <id>  # Auto-removes due to --rm
@@ -78,34 +78,34 @@ container stop <id>  # Auto-removes due to --rm
 docker stop <id>     # Auto-removes due to --rm
 ```
 
-### Implementation Details
+### 实施细节
 
-The implementation is in `backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py`:
+实现在 `backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py` 中：
 
-- `_detect_container_runtime()`: Detects available runtime at startup
-- `_start_container()`: Uses detected runtime, skips Docker-specific options for Apple Container
-- `_stop_container()`: Uses appropriate stop command for the runtime
+- `_detect_container_runtime()`：启动时检测可用的运行时
+- `_start_container()`：使用检测到的运行时，跳过 Apple 容器的 Docker 特定选项
+- `_stop_container()`：为运行时使用适当的停止命令
 
-## Configuration
+## 配置
 
-No configuration changes are needed! The system works automatically.
+无需更改配置！系统自动工作。
 
-However, you can verify the runtime in use by checking the logs:
+但是，您可以通过检查日志来验证正在使用的运行时：
 
 ```
 INFO:deerflow.community.aio_sandbox.aio_sandbox_provider:Detected Apple Container: container version 0.1.0
 INFO:deerflow.community.aio_sandbox.aio_sandbox_provider:Starting sandbox container using container: ...
 ```
 
-Or for Docker:
+或者对于 Docker：
 ```
 INFO:deerflow.community.aio_sandbox.aio_sandbox_provider:Apple Container not available, falling back to Docker
 INFO:deerflow.community.aio_sandbox.aio_sandbox_provider:Starting sandbox container using docker: ...
 ```
 
-## Container Images
+## 容器图像
 
-Both runtimes use OCI-compatible images. The default image works with both:
+两个运行时都使用 OCI 兼容的图像。默认图像适用于两者：
 
 ```yaml
 sandbox:
@@ -113,29 +113,29 @@ sandbox:
   image: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest  # Default image
 ```
 
-Make sure your images are available for the appropriate architecture:
-- ARM64 for Apple Container on Apple Silicon
-- AMD64 for Docker on Intel Macs
-- Multi-arch images work on both
+确保您的图像可用于适当的架构：
+- ARM64 用于 Apple Silicon 上的 Apple 容器
+- AMD64 用于 Intel Mac 上的 Docker
+- 多架构图像适用于两者
 
-### Pre-pulling Images (Recommended)
+### 预拉图片（推荐）
 
-**Important**: Container images are typically large (500MB+) and are pulled on first use, which can cause a long wait time without clear feedback.
+**重要**：容器镜像通常很大（500MB+）并且在第一次使用时被拉取，这可能会导致长时间的等待时间而没有明确的反馈。
 
-**Best Practice**: Pre-pull the image during setup:
+**最佳实践**：在设置过程中预拉图像：
 
 ```bash
 # From project root
 make setup-sandbox
 ```
 
-This command will:
-1. Read the configured image from `config.yaml` (or use default)
-2. Detect available runtime (Apple Container or Docker)
-3. Pull the image with progress indication
-4. Verify the image is ready for use
+该命令将：
+1. 从`config.yaml`读取配置的图像（或使用默认值）
+2. 检测可用的运行时（Apple Container 或 Docker）
+3. 拉取带有进度指示的镜像
+4. 验证图像是否可供使用
 
-**Manual pre-pull**:
+**手动预拉**：
 
 ```bash
 # Using Apple Container
@@ -145,15 +145,15 @@ container image pull enterprise-public-cn-beijing.cr.volces.com/vefaas-public/al
 docker pull enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
 ```
 
-If you skip pre-pulling, the image will be automatically pulled on first agent execution, which may take several minutes depending on your network speed.
+如果您跳过预拉取，图像将在第一次代理执行时自动拉取，这可能需要几分钟，具体取决于您的网络速度。
 
-## Cleanup Scripts
+## 清理脚本
 
-The project includes a unified cleanup script that handles both runtimes:
+该项目包含一个处理两个运行时的统一清理脚本：
 
-**Script:** `scripts/cleanup-containers.sh`
+**脚本：** `scripts/cleanup-containers.sh`
 
-**Usage:**
+**用法：**
 ```bash
 # Clean up all DeerFlow sandbox containers
 ./scripts/cleanup-containers.sh deer-flow-sandbox
@@ -162,53 +162,53 @@ The project includes a unified cleanup script that handles both runtimes:
 ./scripts/cleanup-containers.sh my-prefix
 ```
 
-**Makefile Integration:**
+**Makefile 集成：**
 
-All cleanup commands in `Makefile` automatically handle both runtimes:
+`Makefile` 中的所有清理命令都会自动处理两个运行时：
 ```bash
 make stop   # Stops all services and cleans up containers
 make clean  # Full cleanup including logs
 ```
 
-## Testing
+## 测试
 
-Test the container runtime detection:
+测试容器运行时检测：
 
 ```bash
 cd backend
 python test_container_runtime.py
 ```
 
-This will:
-1. Detect the available runtime
-2. Optionally start a test container
-3. Verify connectivity
-4. Clean up
+这将：
+1. 检测可用运行时
+2. 可选择启动一个测试容器
+3. 验证连接
+4. 清理
 
-## Troubleshooting
+## 故障排除
 
-### Apple Container not detected on macOS
+### macOS 上未检测到 Apple 容器
 
-1. Check if installed:
+1. 检查是否已安装：
    ```bash
    which container
    container --version
    ```
 
-2. Check if service is running:
+2. 检查服务是否正在运行：
    ```bash
    container system start
    ```
 
-3. Check logs for detection:
+3. 检查日志进行检测：
    ```bash
    # Look for detection message in application logs
    grep "container runtime" logs/*.log
    ```
 
-### Containers not cleaning up
+### 容器未清理
 
-1. Manually check running containers:
+1. 手动检查正在运行的容器：
    ```bash
    # Apple Container
    container list
@@ -217,21 +217,21 @@ This will:
    docker ps
    ```
 
-2. Run cleanup script manually:
+2. 手动运行清理脚本：
    ```bash
    ./scripts/cleanup-containers.sh deer-flow-sandbox
    ```
 
-### Performance issues
+### 性能问题
 
-- Apple Container should be faster on Apple Silicon
-- If experiencing issues, you can force Docker by temporarily renaming the `container` command:
+- Apple Container 在 Apple Silicon 上应该更快
+- 如果遇到问题，您可以通过临时重命名 `container` 命令来强制使用 Docker：
    ```bash
    # Temporary workaround - not recommended for permanent use
    sudo mv /opt/homebrew/bin/container /opt/homebrew/bin/container.bak
    ```
 
-## References
+## 参考文献
 
 - [Apple Container GitHub](https://github.com/apple/container)
 - [Apple Container Documentation](https://github.com/apple/container/blob/main/docs/)

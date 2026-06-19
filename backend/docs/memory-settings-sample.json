@@ -3,36 +3,36 @@
   "lastUpdated": "2026-03-28T10:30:00Z",
   "user": {
     "workContext": {
-      "summary": "Working on DeerFlow memory management UX, including local search, local filters, clear-all, and single-fact deletion in Settings > Memory.",
+      "summary": "致力于 DeerFlow 内存管理 UX，包括本地搜索、本地过滤器、全部清除和“设置”>“内存”中的单事实删除。",
       "updatedAt": "2026-03-28T10:30:00Z"
     },
     "personalContext": {
-      "summary": "Prefers Chinese during collaboration, but wants GitHub PR titles and bodies written in English with a Chinese translation provided alongside them.",
+      "summary": "在合作期间更喜欢中文，但希望 GitHub PR 标题和正文用英文书写，并提供中文翻译。",
       "updatedAt": "2026-03-28T10:28:00Z"
     },
     "topOfMind": {
-      "summary": "Wants reviewers to be able to reproduce the memory search and filter flow quickly with pre-populated sample data.",
+      "summary": "希望审阅者能够使用预先填充的示例数据快速重现内存搜索和过滤流程。",
       "updatedAt": "2026-03-28T10:26:00Z"
     }
   },
   "history": {
     "recentMonths": {
-      "summary": "Recently contributed multiple DeerFlow pull requests covering memory, uploads, and compatibility fixes.",
+      "summary": "最近贡献了多个 DeerFlow 拉取请求，涵盖内存、上传和兼容性修复。",
       "updatedAt": "2026-03-28T10:24:00Z"
     },
     "earlierContext": {
-      "summary": "Often prefers shipping smaller, reviewable changes with explicit validation notes.",
+      "summary": "通常更喜欢通过明确的验证注释来交付较小的、可审查的更改。",
       "updatedAt": "2026-03-28T10:22:00Z"
     },
     "longTermBackground": {
-      "summary": "Actively building open-source contribution experience and improving end-to-end delivery quality.",
+      "summary": "积极打造开源贡献体验，提升端到端交付质量。",
       "updatedAt": "2026-03-28T10:20:00Z"
     }
   },
   "facts": [
     {
       "id": "fact_review_001",
-      "content": "User prefers Chinese for day-to-day collaboration.",
+      "content": "用户更喜欢用中文进行日常协作。",
       "category": "preference",
       "confidence": 0.95,
       "createdAt": "2026-03-28T09:50:00Z",
@@ -40,7 +40,7 @@
     },
     {
       "id": "fact_review_002",
-      "content": "PR titles and bodies should be drafted in English and accompanied by a Chinese translation.",
+      "content": "PR 标题和正文应以英文起草并附有中文译文。",
       "category": "workflow",
       "confidence": 0.93,
       "createdAt": "2026-03-28T09:52:00Z",
@@ -48,7 +48,7 @@
     },
     {
       "id": "fact_review_003",
-      "content": "User implemented memory search and filter improvements in the DeerFlow settings page.",
+      "content": "用户在 DeerFlow 设置页面中实现了内存搜索和过滤器改进。",
       "category": "project",
       "confidence": 0.91,
       "createdAt": "2026-03-28T09:54:00Z",
@@ -56,7 +56,7 @@
     },
     {
       "id": "fact_review_004",
-      "content": "User added clear-all memory support through the gateway memory API.",
+      "content": "用户通过网关内存API 添加了清除所有内存支持。",
       "category": "project",
       "confidence": 0.89,
       "createdAt": "2026-03-28T09:56:00Z",
@@ -64,7 +64,7 @@
     },
     {
       "id": "fact_review_005",
-      "content": "User added single-fact deletion support for persisted memory entries.",
+      "content": "用户添加了对持久内存条目的单事实删除支持。",
       "category": "project",
       "confidence": 0.9,
       "createdAt": "2026-03-28T09:58:00Z",
@@ -72,7 +72,7 @@
     },
     {
       "id": "fact_review_006",
-      "content": "Reviewer can search for keyword memory to see multiple matching facts.",
+      "content": "审阅者可以搜索关键字记忆来查看多个匹配的事实。",
       "category": "testing",
       "confidence": 0.84,
       "createdAt": "2026-03-28T10:00:00Z",
@@ -80,7 +80,7 @@
     },
     {
       "id": "fact_review_007",
-      "content": "Reviewer can search for keyword Chinese to verify cross-category matching.",
+      "content": "审稿人可以搜索关键字Chinese来验证跨类别匹配。",
       "category": "testing",
       "confidence": 0.82,
       "createdAt": "2026-03-28T10:02:00Z",
@@ -88,7 +88,7 @@
     },
     {
       "id": "fact_review_008",
-      "content": "Reviewer can search for workflow to verify category text is included in local filtering.",
+      "content": "审阅者可以搜索工作流程以验证类别文本是否包含在本地过滤中。",
       "category": "testing",
       "confidence": 0.81,
       "createdAt": "2026-03-28T10:04:00Z",
@@ -96,7 +96,7 @@
     },
     {
       "id": "fact_review_009",
-      "content": "Delete fact testing can target this disposable sample entry.",
+      "content": "删除事实测试可以针对此一次性样本条目。",
       "category": "testing",
       "confidence": 0.78,
       "createdAt": "2026-03-28T10:06:00Z",
@@ -104,7 +104,7 @@
     },
     {
       "id": "fact_review_010",
-      "content": "This sample fact is intended for edit testing.",
+      "content": "该示例事实用于编辑测试。",
       "category": "testing",
       "confidence": 0.8,
       "createdAt": "2026-03-28T10:08:00Z",

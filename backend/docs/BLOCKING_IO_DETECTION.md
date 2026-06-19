@@ -1,90 +1,84 @@
-# Blocking IO detection usage and maintenance
+# 阻塞 IO 检测使用和维护
 
-This document describes how to use and maintain DeerFlow backend blocking-IO
-detection for async event-loop safety.
+本文档介绍如何使用和维护 DeerFlow 后端的阻塞 IO 检测，
+以保护异步事件循环安全。
 
-The goal is narrow: find and prevent synchronous IO from blocking backend
-async event-loop paths. Static and runtime detection are complementary, but
-they have different jobs.
+目标很明确：找出并防止同步 IO 阻塞后端异步事件循环路径。
+静态检测和运行时检测互为补充，但职责不同。
 
-## Static detector
+## 静态检测器
 
-The static detector is the discovery tool. It scans backend source code and
-reports candidate blocking-IO call sites that may need human review.
+静态检测器是发现工具。它扫描后端源代码，并报告可能需要人工审核的
+阻塞 IO 候选调用点。
 
-Run it from the repository root:
-
-```bash
-make detect-blocking-io
-```
-
-Or from `backend/`:
+从存储库根目录运行它：
 
 ```bash
 make detect-blocking-io
 ```
 
-The report is written to:
+或来自 `backend/`：
+
+```bash
+make detect-blocking-io
+```
+
+报告写入：
 
 ```text
 .deer-flow/blocking-io-findings.json
 ```
 
-Use this output for review and triage. A static finding is a candidate, not
-proof that production blocks the event loop at runtime. The current static
-rules are intentionally broad; prefer triaging existing output before adding
-new static rules.
+使用此输出进行审查和分类。静态发现只是候选项，
+并不能证明生产环境会在运行时阻塞事件循环。当前静态规则有意保持宽泛；
+添加新的静态规则之前，应优先梳理已有输出。
 
-Add a static rule only when review finds a recurring high-risk blocking
-pattern that is invisible to the current detector.
+仅当审核发现当前检测器不可见、重复出现的高风险阻塞模式时，才添加静态规则。
 
-## Runtime detector
+## 运行时检测器
 
-The runtime detector is the CI regression guard. It uses Blockbuster to fail a
-focused test when code under `app.*` or `deerflow.*` performs blocking IO on
-the asyncio event-loop thread.
+运行时检测器是 CI 回归防护。它使用 Blockbuster，
+在 `app.*` 或 `deerflow.*` 下的代码在异步事件循环线程上执行阻塞 IO 时，
+让聚焦测试失败。
 
-Run it from `backend/`:
+从 `backend/` 运行它：
 
 ```bash
 make test-blocking-io
 ```
 
-The runtime gate starts from confirmed production bugs and protects those
-paths from regressing. It does not prove that the entire backend is free of
-blocking IO; it only covers the production paths exercised by
-`backend/tests/blocking_io/`.
+运行时检查从已确认的生产 bug 开始，并保护这些路径不再回归。
+它不能证明整个后端完全没有阻塞 IO；它只覆盖
+`backend/tests/blocking_io/` 执行到的生产路径。
 
-## Maintenance workflow
+## 维护工作流程
 
-Use the static detector to find candidates, then use review to decide which
-async production paths are worth protecting in CI.
+使用静态检测器寻找候选项，再通过审查决定哪些异步生产路径值得在 CI 中保护。
 
-The normal workflow is:
+正常的工作流程是：
 
-1. Run the static detector to find backend blocking-IO candidates.
-2. Use human review to pick high-risk production async paths.
-3. Add or update a focused runtime anchor in `backend/tests/blocking_io/`.
-4. Let CI prevent that path from regressing.
+1. 运行静态检测器以查找后端阻塞-IO 候选者。
+2. 使用人工审查来选择高风险的生产异步路径。
+3. 在 `backend/tests/blocking_io/` 中添加或更新聚焦的运行时锚点。
+4. 让 CI 防止该路径倒退。
 
-Runtime detection has two maintenance paths.
+运行时检测有两个维护路径。
 
-### Add a runtime rule
+### 添加运行时规则
 
-Add a runtime rule when Blockbuster's default rules do not cover a generic
-blocking primitive used by production code.
+当 Blockbuster 的默认规则没有覆盖生产代码使用的常见阻塞原语时，
+添加运行时规则。
 
-Rules belong in:
+规则属于：
 
 ```text
 backend/tests/support/detectors/blocking_io_runtime.py
 ```
 
-Add them to `_PROJECT_BLOCKING_RULES`, not directly inside individual tests.
-Keeping rules centralized makes it clear which extra primitives DeerFlow
-expects Blockbuster to catch.
+将它们添加到 `_PROJECT_BLOCKING_RULES`，而不是直接在各个测试中。
+集中维护规则可以明确 DeerFlow 期望 Blockbuster 捕获哪些额外原语。
 
-Example shape:
+示例结构：
 
 ```python
 import subprocess
@@ -103,52 +97,48 @@ _PROJECT_BLOCKING_RULES = (
 )
 ```
 
-Do not add a runtime rule just because a business path is not tested. A rule
-only expands what Blockbuster can intercept after code runs.
+不要因为业务路径没有经过测试就添加运行时规则。一条规则
+仅扩展了 Blockbuster 在代码运行后可以拦截的内容。
 
-### Add a runtime anchor
+### 添加运行时锚点
 
-Add a runtime anchor when a high-risk async production path should be protected
-by CI but no existing `backend/tests/blocking_io/` test executes it.
+当需要由 CI 保护某条高风险异步生产路径，但现有
+`backend/tests/blocking_io/` 测试尚未执行到它时，添加运行时锚点。
 
-Anchors belong in:
+锚点属于：
 
 ```text
 backend/tests/blocking_io/
 ```
 
-A good anchor should:
+一个好的锚点应该：
 
-- Call the real production async entry point.
-- Avoid bypassing the blocking surface with test-only `asyncio.to_thread`
-  wrappers.
-- Use real local filesystem inputs when the bug shape is filesystem IO.
-- Mock only the external dependency boundary, such as a network service or
-  third-party saver class.
-- Fail if a future change moves the blocking operation back onto the event
-  loop.
+- 调用真正的生产异步入口点。
+- 避免只通过测试专用 `asyncio.to_thread` 包装器绕过阻塞面。
+- 当 bug 模式是文件系统 IO 时，使用真实的本地文件系统输入。
+- 仅模拟外部依赖边界，例如网络服务或
+  第三方 saver 类。
+- 如果未来改动把阻塞操作移回事件循环，则测试应失败。
 
-Avoid testing only the low-level helper unless that helper is the production
-async entry point. The runtime gate is most useful when it protects the caller
-that production actually executes.
+避免仅测试低级帮助程序，除非该帮助程序是生产环境
+异步入口点。运行时检查在保护生产实际执行的调用方时最有用。
 
-## Current runtime coverage
+## 当前运行时覆盖范围
 
-The runtime anchors protect confirmed blocking-IO bug shapes:
+运行时锚点保护已确认的阻塞 IO bug 模式：
 
-- SQLite checkpointer setup, including path resolution and parent-directory
-  creation.
-- Subagent skill metadata loading through `SubagentExecutor._load_skills()`.
-- `JsonlRunEventStore` async API (`put` / `list_*` / `delete_*`): the JSONL
-  run-event backend offloads its synchronous file IO via `asyncio.to_thread`
-  (fix #3084); this anchor drives the real async API under the gate so any
-  blocking IO reintroduced on the loop fails, not only removal of one
-  `to_thread` call.
-- `UploadsMiddleware.before_agent` uploads-directory scan: a sync-only middleware
-  hook runs on the event loop under async graph execution, so the scan is
-  offloaded via `abefore_agent` + `run_in_executor`.
-- Gate health checks: Blockbuster catches unoffloaded calls, opt-out works, and
-  patches are restored after exceptions.
+- SQLite 检查点设置，包括路径解析和父目录创建。
+- 子代理技能元数据通过 `SubagentExecutor._load_skills()` 加载。
+- `JsonlRunEventStore` 异步 API (`put`/`list_*`/`delete_*`)：JSONL
+  run-event 后端通过 `asyncio.to_thread` 卸载其同步文件 IO
+  （修复 #3084）；该锚点在检查下驱动真实的异步 API，
+  因此任何在事件循环上重新引入阻塞 IO 的行为都会失败，
+  而不只是检查是否删除了某个 `to_thread` 调用。
+- `UploadsMiddleware.before_agent` 上传目录扫描：仅同步中间件
+  钩子在异步图执行下的事件循环上运行，因此扫描是
+  通过 `abefore_agent`+`run_in_executor` 卸载。
+- 检查健康度：Blockbuster 捕获未卸载的调用、验证选择退出机制可用，
+  并确认补丁在异常后会恢复。
 
-As static detection and review identify more high-risk async paths, add new
-runtime anchors incrementally.
+随着静态检测和审查识别更多高风险异步路径，添加新的
+运行时锚点。

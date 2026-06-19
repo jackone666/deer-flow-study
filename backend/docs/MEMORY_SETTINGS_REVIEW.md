@@ -1,63 +1,63 @@
-# Memory Settings Review
+# 内存设置回顾
 
-Use this when reviewing the Memory Settings add/edit flow locally with the fewest possible manual steps.
+以尽可能少的手动步骤在本地查看内存设置 add/edit 流程时使用此选项。
 
-## Quick Review
+## 快速回顾
 
-1. Start DeerFlow locally using any working development setup you already use.
+1. 使用您已使用的任何工作开发设置在本地启动 DeerFlow。
 
-   Examples:
+   示例：
 
    ```bash
    make dev
    ```
 
-   or
+   或
 
    ```bash
    make docker-start
    ```
 
-   If you already have DeerFlow running locally, you can reuse that existing setup.
+   如果您已经在本地运行 DeerFlow，则可以重用现有的设置。
 
-2. Load the sample memory fixture.
+2. 加载样本内存夹具。
 
    ```bash
    python scripts/load_memory_sample.py
    ```
 
-3. Open `Settings > Memory`.
+3. 打开 `Settings > Memory`。
 
-   Default local URLs:
-   - App: `http://localhost:2026`
-   - Local frontend-only fallback: `http://localhost:3000`
+   默认本地 URLs:
+   - 应用程序：`http://localhost:2026`
+   - 仅本地前端后备：`http://localhost:3000`
 
-## Minimal Manual Test
+## 最少的手动测试
 
-1. Click `Add fact`.
-2. Create a new fact with:
-   - Content: `Reviewer-added memory fact`
-   - Category: `testing`
-   - Confidence: `0.88`
-3. Confirm the new fact appears immediately and shows `Manual` as the source.
-4. Edit the sample fact `This sample fact is intended for edit testing.` and change it to:
-   - Content: `This sample fact was edited during manual review.`
-   - Category: `testing`
-   - Confidence: `0.91`
-5. Confirm the edited fact updates immediately.
-6. Refresh the page and confirm both the newly added fact and the edited fact still persist.
+1. 单击 `Add fact`。
+2. 创建一个新事实：
+   - 内容：`Reviewer-added memory fact`
+   - 类别：`testing`
+   - 置信度：`0.88`
+3. 确认新事实立即出现并显示 `Manual` 作为源。
+4. 编辑示例事实 `This sample fact is intended for edit testing.` 并将其更改为：
+   - 内容：`This sample fact was edited during manual review.`
+   - 类别：`testing`
+   - 置信度：`0.91`
+5. 确认编辑后的事实立即更新。
+6. 刷新页面并确认新添加的事实和编辑的事实仍然存在。
 
-## Optional Sanity Checks
+## 可选的健全性检查
 
-- Search `Reviewer-added` and confirm the new fact is matched.
-- Search `workflow` and confirm category text is searchable.
-- Switch between `All`, `Facts`, and `Summaries`.
-- Delete the disposable sample fact `Delete fact testing can target this disposable sample entry.` and confirm the list updates immediately.
-- Clear all memory and confirm the page enters the empty state.
+- 搜索 `Reviewer-added` 并确认新事实匹配。
+- 搜索 `workflow` 并确认类别文本可搜索。
+- 在 `All`、`Facts`和`Summaries` 之间切换。
+- 删除一次性样本事实 `Delete fact testing can target this disposable sample entry.` 并立即确认列表更新。
+- 清除所有内存并确认页面进入空状态。
 
-## Fixture Files
+## 夹具文件
 
-- Sample fixture: `backend/docs/memory-settings-sample.json`
-- Default local runtime target: `backend/.deer-flow/memory.json`
+- 样品夹具：`backend/docs/memory-settings-sample.json`
+- 默认本地运行时目标：`backend/.deer-flow/memory.json`
 
-The loader script creates a timestamped backup automatically before overwriting an existing runtime memory file.
+加载器脚本在覆盖现有运行时内存文件之前自动创建带时间戳的备份。

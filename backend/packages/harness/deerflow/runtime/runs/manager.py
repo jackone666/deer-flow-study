@@ -189,7 +189,12 @@ class RunManager:
         run_id: str,
         operation: Callable[[], Awaitable[Any]],
     ) -> Any:
-        """执行短 store 操作，遇到 SQLite 压力时按策略有限重试。"""
+        """执行短 store 操作，遇到 SQLite 压力时按策略有限重试。
+
+        SQLite 在高并发写入时可能返回 SQLITE_BUSY/SQLITE_LOCKED 等瞬时错误。
+        本方法对该类错误进行有限次数（默认5次）的指数退避重试，平衡了
+        持久化可靠性与写入延迟。非瞬时错误（如磁盘满）则直接传播。
+        """
         policy = self._persistence_retry_policy
         attempt = 1
         delay = policy.initial_delay

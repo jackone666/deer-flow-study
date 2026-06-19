@@ -1,4 +1,29 @@
-"""工具错误处理中间件与共享的运行时中间件构造器。"""
+"""工具错误处理中间件与共享的运行时中间件构造器。
+
+将工具执行异常转换为错误 ``ToolMessage``（而非让异常向上传播终止整个 run）。
+
+示例（``bash`` 工具执行失败）：
+
+```python
+# 工具抛出异常
+bash("rm /nonexistent/file")
+# → FileNotFoundError: /nonexistent/file
+
+# 中间件捕获后转换为：
+ToolMessage(
+    content="Error: Tool 'bash' failed with FileNotFoundError: /nonexistent/file. "
+            "Continue with available context, or choose an alternative tool.",
+    tool_call_id="tc_001",
+    name="bash",
+    status="error",
+)
+# → Agent 收到错误消息后可以选择替代方案（如 ls 检查路径）
+```
+
+超长异常信息被截断到 500 字符（保留前 497 + "..."），防止异常堆栈撑爆上下文窗口。
+
+``build_lead_runtime_middlewares()`` 是 Lead Agent 中间件链的前半部分构造函数，
+后半部分由 ``agent.py:_build_middlewares`` 追加。"""
 
 
 import logging

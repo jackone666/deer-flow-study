@@ -1,24 +1,68 @@
-"""Lead Agent 工厂。
+"""Lead Agent 工厂——DeerFlow Agent 的唯一构造入口。
 
-不变量 —— 追踪回调的挂载位置
-======================================
+完整 Agent 构造流程：
+```
+make_lead_agent(config)                       ← langgraph.json 注册入口
+  ↓
+_make_lead_agent(config, app_config=...)
+  │
+  ├─ 1. 解析运行时参数
+  │     cfg = _get_runtime_config(config)
+  │     model_name, thinking_enabled, is_plan_mode, subagent_enabled, agent_name...
+  │
+  ├─ 2. 模型选择
+  │     _resolve_model_name(requested or agent_config.model)
+  │     → 请求指定 → agent 配置 → 全局默认 → 回退 + 警告
+  │
+  ├─ 3. 注入追踪回调（图根级别，必须在所有 create_chat_model 之前）
+  │     build_tracing_callbacks() → config["callbacks"]
+  │     ⚠️ 此后所有 create_chat_model() 必须传 attach_tracing=False
+  │
+  ├─ 4. 加载技能（用于工具策略过滤）
+  │     _load_enabled_skills_for_tool_policy(available_skills)
+  │
+  ├─ 5. 加载工具
+  │     get_available_tools(model_name, groups, subagent_enabled)
+  │     → sandbox(ls/bash/read/write) + MCP + community + subagent(task)
+  │     + extra_tools (setup_agent / update_agent)
+  │
+  ├─ 6. 工具策略过滤 + 延迟工具组装
+  │     filter_tools_by_skill_allowed_tools() → 按技能白名单过滤
+  │     _assemble_deferred() → 分离 MCP 工具 schema（延迟绑定）
+  │
+  ├─ 7. 构建中间件链（19 个，按严格顺序）
+  │     _build_middlewares(config, model_name, agent_name, deferred_setup)
+  │
+  ├─ 8. 渲染系统提示
+  │     apply_prompt_template(subagent_enabled, agent_name, available_skills, ...)
+  │
+  └─ 9. 创建 Agent 图
+        create_agent(model, tools, middleware, system_prompt, state_schema=ThreadState)
+```
 
-追踪回调（Langfuse、LangSmith）由 :func:`_make_lead_agent` 在 **图调用根** 注入
-（参见向 ``config["callbacks"]`` 追加 ``build_tracing_callbacks()`` 的代码块）。
-本模块中——以及任何可被该图触达的中间件（例如 ``TitleMiddleware``）——
-所有的 ``create_chat_model(...)`` 调用都必须传入 ``attach_tracing=False``。
+**关键不变量 —— ``attach_tracing=False``：**
 
-若忘记该参数，会产生重复的 span（一个挂在图根、一个挂在模型），
-同时 Langfuse 处理器的 ``propagate_attributes`` 路径无法触发，导致
-``session_id`` / ``user_id`` 永远无法写入 trace。
-当前共四个相关调用点：bootstrap agent、默认 agent、summarization 中间件，
-以及 ``TitleMiddleware`` 内部的 async 路径。任何新的图内 ``create_chat_model``
-调用都必须加入此列表并传入该参数。
+追踪回调（Langfuse、LangSmith）由本模块在**图调用根**注入。此后所有
+``create_chat_model(...)`` 调用都必须传入 ``attach_tracing=False``，否则：
+- 产生重复 span（图根一个 + 模型一个）
+- Langfuse 的 ``propagate_attributes`` 无法触发，``session_id``/``user_id`` 永远写不入 trace
+
+当前四个调用点：
+1. bootstrap agent 的 ``create_chat_model``
+2. 默认 agent 的 ``create_chat_model``
+3. ``_create_summarization_middleware`` 内部的 summarization 模型
+4. ``TitleMiddleware`` 内部的标题生成模型
+
+**自定义 Agent 支持：**
+- 启动阶段（``is_bootstrap=True``）：使用精简 prompt + ``setup_agent`` 工具
+- 常规运行（``agent_name="xxx"``）：加载 ``SOUL.md`` + agent 配置 + ``update_agent`` 工具
+- 默认运行（``agent_name=None``）：无 SOUL，无 self-update 能力
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from langchain.agents import create_agent
@@ -55,16 +99,82 @@ logger = logging.getLogger(__name__)
 
 
 def _get_runtime_config(config: RunnableConfig) -> dict:
-    """合并旧的 ``configurable`` 配置项与 LangGraph 运行期 context。"""
-    cfg = dict(config.get("configurable", {}) or {})
-    context = config.get("context", {}) or {}
-    if isinstance(context, dict):
+    """合并 ``configurable`` 配置项与 LangGraph 运行期 context。
+
+    LangGraph 有两层配置通道：
+    - ``config["configurable"]``：用户通过 API 传入的配置（如 model_name、is_plan_mode）
+    - ``config["context"]``：LangGraph 运行期注入的上下文（如 thread_id、run_id）
+
+    本函数将它们合并为单层 dict，context 中的值覆盖 configurable 中的同名字段。
+
+    输入示例：
+    ```python
+    config = {
+        "configurable": {"model_name": "deepseek-v3", "thread_id": "t1"},
+        "context": {"thread_id": "t1", "run_id": "r1", "agent_name": "my-agent"},
+    }
+    cfg = _get_runtime_config(config)
+    # → {"model_name": "deepseek-v3", "thread_id": "t1", "run_id": "r1", "agent_name": "my-agent"}
+    ```
+
+    Args:
+        config: LangGraph RunnableConfig（含 ``configurable`` 和 ``context`` 两层）。
+
+    Returns:
+        合并后的扁平配置字典。
+    """
+    if not isinstance(config, Mapping):
+        return {}
+
+    cfg: dict = {}
+    configurable = config.get("configurable")
+    if isinstance(configurable, Mapping):
+        cfg.update(configurable)
+
+    context = config.get("context")
+    if isinstance(context, Mapping):
         cfg.update(context)
+
     return cfg
 
 
-def _resolve_model_name(requested_model_name: str | None = None, *, app_config: AppConfig | None = None) -> str:
-    """安全地解析运行期模型名，若名称无效则回退到默认。若未配置模型则抛出异常。"""
+def _resolve_model_name(requested_model_name: str | None = None, *,
+                        app_config: AppConfig | None = None) -> str:
+    """安全地解析运行期模型名，若名称无效则回退到默认。
+
+    解析优先级：
+    ```
+    请求指定 model_name="deepseek-v3"
+      → app_config.get_model_config("deepseek-v3") 命中？ → 使用 "deepseek-v3"
+      → 未命中？→ 警告日志 + 回退到默认模型
+      → 未指定？→ 使用 config.models[0].name（全局默认）
+      → 无模型配置？→ raise ValueError
+    ```
+
+    使用示例：
+    ```python
+    # 正常解析
+    model = _resolve_model_name("deepseek-v3")  # → "deepseek-v3"
+
+    # 模型不存在，回退到默认
+    model = _resolve_model_name("nonexistent-model")
+    # 日志: Model 'nonexistent-model' not found in config; fallback to default model 'deepseek-v3'
+    # → "deepseek-v3"
+
+    # 未指定，使用默认
+    model = _resolve_model_name()  # → config.models[0].name
+    ```
+
+    Args:
+        requested_model_name: 请求中指定的模型名（可为 None）。
+        app_config: 可选的应用配置，便于测试注入。
+
+    Returns:
+        解析后的有效模型名。
+
+    Raises:
+        ValueError: 配置中没有可用模型时。
+    """
     app_config = app_config or get_app_config()
     default_model_name = app_config.models[0].name if app_config.models else None
     if default_model_name is None:
@@ -78,7 +188,8 @@ def _resolve_model_name(requested_model_name: str | None = None, *, app_config: 
     return default_model_name
 
 
-def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> DeerFlowSummarizationMiddleware | None:
+def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> (
+        DeerFlowSummarizationMiddleware | None):
     """根据配置创建并配置摘要中间件。"""
     resolved_app_config = app_config or get_app_config()
     config = resolved_app_config.summarization
@@ -156,119 +267,109 @@ def _create_todo_list_middleware(is_plan_mode: bool) -> TodoMiddleware | None:
     if not is_plan_mode:
         return None
 
-    # Custom prompts matching DeerFlow's style
+    # 符合 DeerFlow 风格的提示模板
     system_prompt = """
 <todo_list_system>
-You have access to the `write_todos` tool to help you manage and track complex multi-step objectives.
+你可以使用 `write_todos` 工具来管理和追踪复杂的多步骤目标。
 
-**CRITICAL RULES:**
-- Mark todos as completed IMMEDIATELY after finishing each step - do NOT batch completions
-- Keep EXACTLY ONE task as `in_progress` at any time (unless tasks can run in parallel)
-- Update the todo list in REAL-TIME as you work - this gives users visibility into your progress
-- DO NOT use this tool for simple tasks (< 3 steps) - just complete them directly
+**关键规则：**
+- 每完成一步后立即将 todo 标记为已完成——不要批量完成
+- 任何时刻保持恰好一个任务处于 `in_progress` 状态（可并行的任务除外）
+- 实时更新 todo 列表——让用户随时了解你的进度
+- 不要对简单任务（少于 3 步）使用本工具——直接完成即可
 
-**When to Use:**
-This tool is designed for complex objectives that require systematic tracking:
-- Complex multi-step tasks requiring 3+ distinct steps
-- Non-trivial tasks needing careful planning and execution
-- User explicitly requests a todo list
-- User provides multiple tasks (numbered or comma-separated list)
-- The plan may need revisions based on intermediate results
+**何时使用：**
+本工具适用于需要系统化追踪的复杂目标：
+- 需要 3 个或以上明确步骤的复杂多步任务
+- 需要仔细规划和执行的非平凡任务
+- 用户明确要求使用 todo 列表
+- 用户提供了多个任务（编号或逗号分隔的列表）
+- 计划可能需要根据中间结果进行调整
 
-**When NOT to Use:**
-- Single, straightforward tasks
-- Trivial tasks (< 3 steps)
-- Purely conversational or informational requests
-- Simple tool calls where the approach is obvious
+**何时不使用：**
+- 单一的、直接的任务
+- 简单任务（少于 3 步）
+- 纯对话或信息查询
+- 方法明确的简单工具调用
 
-**Best Practices:**
-- Break down complex tasks into smaller, actionable steps
-- Use clear, descriptive task names
-- Remove tasks that become irrelevant
-- Add new tasks discovered during implementation
-- Don't be afraid to revise the todo list as you learn more
+**最佳实践：**
+- 将复杂任务分解为更小、可执行的步骤
+- 使用清晰、描述性的任务名称
+- 移除不再相关的任务
+- 添加实现过程中发现的新任务
+- 随着了解加深，勇于调整 todo 列表
 
-**Task Management:**
-Writing todos takes time and tokens - use it when helpful for managing complex problems, not for simple requests.
+**任务管理：**
+编写 todo 需要时间和 token——仅在管理复杂问题时使用，而非简单请求。
 </todo_list_system>
 """
 
-    tool_description = """Use this tool to create and manage a structured task list for complex work sessions.
+    tool_description = """使用本工具为复杂工作会话创建和管理结构化的任务列表。
 
-**IMPORTANT: Only use this tool for complex tasks (3+ steps). For simple requests, just do the work directly.**
+**重要：仅对复杂任务（3 步以上）使用本工具。对于简单请求，直接完成工作即可。**
 
-## When to Use
+## 何时使用
 
-Use this tool in these scenarios:
-1. **Complex multi-step tasks**: When a task requires 3 or more distinct steps or actions
-2. **Non-trivial tasks**: Tasks requiring careful planning or multiple operations
-3. **User explicitly requests todo list**: When the user directly asks you to track tasks
-4. **Multiple tasks**: When users provide a list of things to be done
-5. **Dynamic planning**: When the plan may need updates based on intermediate results
+在以下场景使用本工具：
+1. **复杂多步任务**：需要 3 个或以上明确步骤或操作
+2. **非平凡任务**：需要仔细规划或多个操作
+3. **用户明确要求**：用户直接要求你追踪任务
+4. **多个任务**：用户提供了待办事项列表
+5. **动态规划**：计划可能需要根据中间结果更新
 
-## When NOT to Use
+## 何时不使用
 
-Skip this tool when:
-1. The task is straightforward and takes less than 3 steps
-2. The task is trivial and tracking provides no benefit
-3. The task is purely conversational or informational
-4. It's clear what needs to be done and you can just do it
+以下情况跳过本工具：
+1. 任务直接明了，少于 3 步
+2. 任务琐碎，追踪没有收益
+3. 纯对话或信息查询
+4. 该做什么很明确，直接做就行
 
-## How to Use
+## 如何使用
 
-1. **Starting a task**: Mark it as `in_progress` BEFORE beginning work
-2. **Completing a task**: Mark it as `completed` IMMEDIATELY after finishing
-3. **Updating the list**: Add new tasks, remove irrelevant ones, or update descriptions as needed
-4. **Multiple updates**: You can make several updates at once (e.g., complete one task and start the next)
+1. **启动任务**：在开始工作之前将其标记为 `in_progress`
+2. **完成任务**：完成后立即将其标记为 `completed`
+3. **更新列表**：按需添加新任务、移除无关任务或更新描述
+4. **批量更新**：可以一次进行多个更新（例如完成一个任务并启动下一个）
 
-## Task States
+## 任务状态
 
-- `pending`: Task not yet started
-- `in_progress`: Currently working on (can have multiple if tasks run in parallel)
-- `completed`: Task finished successfully
+- `pending`：任务尚未开始
+- `in_progress`：正在处理中（可并行的任务可以有多个）
+- `completed`：任务已成功完成
 
-## Task Completion Requirements
+## 任务完成要求
 
-**CRITICAL: Only mark a task as completed when you have FULLY accomplished it.**
+**关键：只有在完全完成任务后才能将其标记为已完成。**
 
-Never mark a task as completed if:
-- There are unresolved issues or errors
-- Work is partial or incomplete
-- You encountered blockers preventing completion
-- You couldn't find necessary resources or dependencies
-- Quality standards haven't been met
+以下情况绝不应标记为已完成：
+- 存在未解决的问题或错误
+- 工作是部分或不完整的
+- 遇到阻止完成的障碍
+- 找不到必要的资源或依赖
+- 质量标准未达到
 
-If blocked, keep the task as `in_progress` and create a new task describing what needs to be resolved.
+如被阻塞，保持任务 `in_progress` 并创建新任务描述需要解决的问题。
 
-## Best Practices
+## 最佳实践
 
-- Create specific, actionable items
-- Break complex tasks into smaller, manageable steps
-- Use clear, descriptive task names
-- Update task status in real-time as you work
-- Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
-- Remove tasks that are no longer relevant
-- **IMPORTANT**: When you write the todo list, mark your first task(s) as `in_progress` immediately
-- **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
+- 创建具体、可执行的项目
+- 将复杂任务分解为更小、可管理的步骤
+- 使用清晰、描述性的任务名称
+- 实时更新任务状态
+- 完成后立即标记（不要批量完成）
+- 移除不再相关的任务
+- **重要**：编写 todo 列表时，立即将第一个任务标记为 `in_progress`
+- **重要**：除非所有任务已完成，始终保持至少一个任务 `in_progress` 以展示进度
 
-Being proactive with task management demonstrates thoroughness and ensures all requirements are completed successfully.
+主动管理任务体现了严谨性，确保所有需求顺利完成。
 
-**Remember**: If you only need a few tool calls to complete a task and it's clear what to do, it's better to just do the task directly and NOT use this tool at all.
+**记住**：如果只需少量工具调用即可完成任务且方法明确，直接完成工作而不使用本工具是更好的选择。
 """
 
     return TodoMiddleware(system_prompt=system_prompt, tool_description=tool_description)
 
 
-# ThreadDataMiddleware must be before SandboxMiddleware to ensure thread_id is available
-# UploadsMiddleware should be after ThreadDataMiddleware to access thread_id
-# DanglingToolCallMiddleware patches missing ToolMessages before model sees the history
-# SummarizationMiddleware should be early to reduce context before other processing
-# TodoListMiddleware should be before ClarificationMiddleware to allow todo management
-# TitleMiddleware generates title after first exchange
-# MemoryMiddleware queues conversation for memory update (after TitleMiddleware)
-# ViewImageMiddleware should be before ClarificationMiddleware to inject image details before LLM
-# ToolErrorHandlingMiddleware should be before ClarificationMiddleware to convert tool exceptions to ToolMessages
-# ClarificationMiddleware should be last to intercept clarification requests after model calls
 def _build_middlewares(
     config: RunnableConfig,
     model_name: str | None,
@@ -278,18 +379,52 @@ def _build_middlewares(
     app_config: AppConfig | None = None,
     deferred_setup=None,
 ):
-    """根据运行期配置构建中间件链。
+    """根据运行期配置构建 Lead Agent 中间件链。
+
+    链顺序不是任意的——每个中间件的位置由依赖关系和拦截点语义决定：
+
+    ```
+    位置  中间件                      拦截点            排序原因
+    ──────────────────────────────────────────────────────────────────────
+     1   ThreadDataMiddleware         before_agent      必须在所有中间件之前（创建线程目录）
+     2   UploadsMiddleware            before_agent      依赖 ThreadData 提供的 thread_id
+     3   DynamicContextMiddleware     before_agent      将记忆/日期注入首条 HumanMessage
+     4   SummarizationMiddleware      before_model      尽早压缩上下文，减轻后续中间件负担
+     5   TodoListMiddleware           before_model      plan_mode 下的写 todo 管理
+     6   TokenUsageMiddleware         after_model       token 用量记录
+     7   TitleMiddleware              after_agent       首轮交换后自动生成标题
+     8   MemoryMiddleware             after_agent       在 Title 之后入队（避免标题消息混入记忆）
+     9   ViewImageMiddleware          before_model      图片注入须在 LLM 调用前
+    10   DeferredToolFilterMiddleware  wrap_model_call   隐藏 MCP schema 直到 tool_search 提升
+    11   SubagentLimitMiddleware      after_model       截断多余 task 调用
+    12   LoopDetectionMiddleware      after_model       检测并中断重复 tool_call 循环
+    13   自定义中间件                  —                 用户注入位置（Clarification 之前）
+    14   SafetyFinishReasonMiddleware after_model       安全终止时剥离 tool_call（在 Loop 之后）
+    15   ClarificationMiddleware      wrap_tool_call    拦截 ask_clarification → 中断（必须最后）
+    ```
+
+    条件性启用：
+    | 中间件                        | 条件                                        |
+    |-------------------------------|---------------------------------------------|
+    | SummarizationMiddleware        | ``summarization.enabled=true``              |
+    | TodoListMiddleware             | ``is_plan_mode=true`` 且非 bootstrap        |
+    | TokenUsageMiddleware           | ``token_usage.enabled=true``                |
+    | ViewImageMiddleware            | 当前模型 ``supports_vision=true``            |
+    | DeferredToolFilterMiddleware   | ``tool_search.enabled=true`` 且有延迟工具     |
+    | SubagentLimitMiddleware        | ``subagent_enabled=true``                   |
+    | LoopDetectionMiddleware        | ``loop_detection.enabled=true``             |
+    | SafetyFinishReasonMiddleware   | ``safety_finish_reason.enabled=true``       |
 
     Args:
         config: 运行期配置，包含 ``is_plan_mode`` 等可配置项。
         model_name: 已解析的模型名称，用于判断是否启用视觉相关中间件。
         agent_name: 若提供，``MemoryMiddleware`` 将按 Agent 隔离存储记忆。
-        custom_middlewares: 可选，注入到链中的自定义中间件列表。
+        custom_middlewares: 可选，注入到链中的自定义中间件列表（插在 SafetyFinish 之前）。
         app_config: 可选的应用配置对象，便于测试或非默认配置注入。
-        deferred_setup: 可选的延迟工具集合元数据。
+        deferred_setup: 可选的延迟工具集合元数据（``DeferredToolSetup``）。
 
     Returns:
-        按顺序排列的中间件实例列表。
+        按严格顺序排列的中间件实例列表。
     """
     resolved_app_config = app_config or get_app_config()
     middlewares = build_lead_runtime_middlewares(app_config=resolved_app_config, lazy_init=True)
@@ -368,9 +503,42 @@ def _build_middlewares(
 def _assemble_deferred(filtered_tools: list[BaseTool], *, enabled: bool) -> tuple[list[BaseTool], DeferredToolSetup]:
     """在工具策略过滤之后构建最终工具列表与延迟工具集合。
 
-    必须在工具策略过滤之后调用，避免延迟目录暴露 Agent 无权使用的工具。
-    采用“失败即停”策略：当 ``tool_search`` 启用且存在 MCP 工具幸存于过滤，
-    但未恢复出延迟集合时，抛错而不是将完整 schema 静默绑定给模型。
+    当 ``tool_search`` 启用时，MCP 工具的 schema 不会直接绑定到模型（避免上下文膨胀），
+    而是通过 ``tool_search`` 工具按需发现。本函数将 MCP 工具从活跃列表分离到延迟集合，
+    并构造 ``tool_search`` 工具本身。
+
+    示例（tool_search 启用，3 个工具）：
+    ```python
+    tools = [
+        bash_tool,           # 普通工具
+        mcp_tool_a,          # MCP 工具 → 移入延迟集合
+        mcp_tool_b,          # MCP 工具 → 移入延迟集合
+    ]
+    final_tools, setup = _assemble_deferred(tools, enabled=True)
+    # final_tools = [bash_tool, tool_search_tool]     ← LLM 绑定的 schema
+    # setup.deferred_names = {"mcp_tool_a", "mcp_tool_b"} ← 存入 system prompt
+    # setup.tool_search_tool → tool_search            ← 发现延迟工具
+    ```
+
+    示例（tool_search 禁用）：
+    ```python
+    final_tools, setup = _assemble_deferred(tools, enabled=False)
+    # final_tools = [bash_tool, mcp_tool_a, mcp_tool_b]  ← 全部直接绑定
+    # setup.deferred_names = frozenset()                 ← 空
+    ```
+
+    "失败即停"策略：若 ``tool_search`` 启用 + MCP 工具幸存在过滤后 +
+    未恢复出延迟集合 → ``RuntimeError``，避免 MCP schema 静默丢失。
+
+    Args:
+        filtered_tools: 经过技能白名单过滤后的工具列表。
+        enabled: ``tool_search`` 是否启用。
+
+    Returns:
+        ``(final_tools, deferred_setup)`` 元组。
+
+    Raises:
+        RuntimeError: 启用 tool_search 但延迟集合异常为空时。
     """
     from deerflow.tools.builtins.tool_search import build_deferred_tool_setup
     from deerflow.tools.mcp_metadata import is_mcp_tool
@@ -385,7 +553,31 @@ def _assemble_deferred(filtered_tools: list[BaseTool], *, enabled: bool) -> tupl
 
 
 def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
-    """内部辅助方法。"""
+    """根据 Agent 配置和启动模式返回可用技能白名单。
+
+    - bootstrap 模式：固定返回 ``{"bootstrap"}``（只有 bootstrap 技能）
+    - 自定义 Agent 有显式 skills 配置：返回配置的集合
+    - 默认运行：返回 ``None``（不限制，全部技能可用）
+
+    输入示例：
+    ```python
+    # bootstrap 模式
+    _available_skill_names(None, is_bootstrap=True)  # → {"bootstrap"}
+
+    # 自定义 Agent 配置了 skills: ["code-review", "testing"]
+    _available_skill_names(agent_config, is_bootstrap=False)  # → {"code-review", "testing"}
+
+    # 默认 Agent（无配置）
+    _available_skill_names(None, is_bootstrap=False)  # → None（全部可用）
+    ```
+
+    Args:
+        agent_config: 自定义 Agent 配置对象（可为 None）。
+        is_bootstrap: 是否为首次启动的 bootstrap Agent。
+
+    Returns:
+        技能名白名单集合；``None`` 表示不限制。
+    """
     if is_bootstrap:
         return {"bootstrap"}
     if agent_config and agent_config.skills is not None:
@@ -394,61 +586,109 @@ def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
 
 
 def _load_enabled_skills_for_tool_policy(available_skills: set[str] | None, *, app_config: AppConfig) -> list[Skill]:
-    """内部辅助方法。"""
-    try:
-        from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
+    """加载已启用技能并按白名单过滤，返回工具策略过滤所需的 Skill 列表。
 
-        skills = get_enabled_skills_for_config(app_config)
-    except Exception:
-        logger.exception("Failed to load skills for allowed-tools policy")
-        raise
+    从存储中加载全部已启用技能，然后按 ``available_skills`` 白名单过滤。
+    过滤后的列表传给 ``filter_tools_by_skill_allowed_tools()``，确保 Agent
+    只能使用白名单内技能声明的工具。
 
-    if available_skills is None:
-        return skills
-    return [skill for skill in skills if skill.name in available_skills]
+    输入示例：
+    ```python
+    # 全部技能可用
+    skills = _load_enabled_skills_for_tool_policy(None, app_config=config)
+    # → [Skill("bootstrap"), Skill("code-review"), Skill("testing")]
+
+    # 白名单限制
+    skills = _load_enabled_skills_for_tool_policy({"code-review"}, app_config=config)
+    # → [Skill("code-review")]
+    ```
+
+    Args:
+        available_skills: 白名单技能名集合；``None`` 表示不限制。
+        app_config: 应用配置，用于解析技能存储路径。
+
+    Returns:
+        按白名单过滤后的 Skill 列表。
+
+    Raises:
+        Exception: 技能加载失败时传播原始异常（加载是基础能力，失败应阻止 Agent 创建）。
+    """
 
 
 def make_lead_agent(config: RunnableConfig):
-    """LangGraph 图工厂；保持与 LangGraph Server 兼容的签名。"""
+    """LangGraph 图工厂——``langgraph.json`` 注册的唯一入口。
+
+    由 LangGraph Server / Gateway 在每次创建 Agent 时调用。
+    从 ``config`` 中提取 ``app_config`` 覆盖（如有），委托给 ``_make_lead_agent``。
+
+    调用链：
+    ```
+    Gateway POST /runs/stream
+      → RunManager → run_agent(worker.py)
+        → make_lead_agent(config)
+          → _make_lead_agent(config, app_config=...)
+    ```
+
+    Args:
+        config: LangGraph RunnableConfig（含 ``configurable`` 和 ``context``）。
+
+    Returns:
+        编译后的 LangGraph Agent 图。
+    """
     runtime_config = _get_runtime_config(config)
     runtime_app_config = runtime_config.get("app_config")
     return _make_lead_agent(config, app_config=runtime_app_config or get_app_config())
 
 
 def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
-    # Lazy import to avoid circular dependency
-    """内部辅助方法。"""
+    """构造 Lead Agent 的核心工厂（9 步流程，详见模块 docstring）。"""
+    # 延迟导入，避免循环依赖（deerflow.tools 会反向引用 agent 模块）
     from deerflow.tools import get_available_tools
     from deerflow.tools.builtins import setup_agent, update_agent
 
-    cfg = _get_runtime_config(config)
-    resolved_app_config = app_config
+    # ═══════════════════════════════════════════════════════════════
+    # 步骤 1：从 config 中提取运行时参数
+    # ═══════════════════════════════════════════════════════════════
+    cfg = _get_runtime_config(config)        # 扁平化 configurable + context
+    resolved_app_config = app_config         # 调用方注入的 AppConfig 快照
 
-    thinking_enabled = cfg.get("thinking_enabled", True)
-    reasoning_effort = cfg.get("reasoning_effort", None)
-    requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
-    is_plan_mode = cfg.get("is_plan_mode", False)
-    subagent_enabled = cfg.get("subagent_enabled", False)
-    max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
-    is_bootstrap = cfg.get("is_bootstrap", False)
-    agent_name = validate_agent_name(cfg.get("agent_name"))
+    # ── 模型相关 ──
+    thinking_enabled = cfg.get("thinking_enabled", True)          # 是否启用 extended thinking
+    reasoning_effort = cfg.get("reasoning_effort", None)          # reasoning effort 等级
+    requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")  # API 请求指定的模型
 
+    # ── 模式开关 ──
+    is_plan_mode = cfg.get("is_plan_mode", False)                 # 计划模式（启用 TodoList 中间件）
+    subagent_enabled = cfg.get("subagent_enabled", False)         # 子代理委派
+    max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)  # 单轮最大并发子代理数
+    is_bootstrap = cfg.get("is_bootstrap", False)                 # 首次启动：用精简 prompt + setup_agent
+    agent_name = validate_agent_name(cfg.get("agent_name"))       # 校验 agent_name 格式安全性
+
+    # ═══════════════════════════════════════════════════════════════
+    # 步骤 2：加载 Agent 配置 + 技能白名单
+    # ═══════════════════════════════════════════════════════════════
+    # bootstrap 阶段不加载自定义 agent 配置（此时还没有任何 agent）
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
     available_skills = _available_skill_names(agent_config, is_bootstrap)
-    # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
+    # 自定义 Agent 可通过 config 指定默认模型；未指定时回退到全局默认
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
-    # Final model name resolution: request → agent config → global default, with fallback for unknown names
+    # ═══════════════════════════════════════════════════════════════
+    # 步骤 3：模型选择（四级回退）
+    # ═══════════════════════════════════════════════════════════════
+    # 优先级：请求指定 → agent 配置 → 全局默认 → ValueError
     model_name = _resolve_model_name(requested_model_name or agent_model_name, app_config=resolved_app_config)
-
     model_config = resolved_app_config.get_model_config(model_name)
 
+    # 防御：配置中没有模型（极端情况，正常部署不应出现）
     if model_config is None:
         raise ValueError("No chat model could be resolved. Please configure at least one model in config.yaml or provide a valid 'model_name'/'model' in the request.")
+    # 模型不支持 thinking 但请求开启了 → 自动降级并告警
     if thinking_enabled and not model_config.supports_thinking:
         logger.warning(f"Thinking mode is enabled but model '{model_name}' does not support it; fallback to non-thinking mode.")
         thinking_enabled = False
 
+    # ── 记录最终生效的 Agent 参数（方便运维排查）──
     logger.info(
         "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
         agent_name or "default",
@@ -460,7 +700,10 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
         max_concurrent_subagents,
     )
 
-    # Inject run metadata for LangSmith trace tagging
+    # ═══════════════════════════════════════════════════════════════
+    # 步骤 4：注入运行元数据 + 追踪回调
+    # ═══════════════════════════════════════════════════════════════
+    # 元数据会被写入 LangSmith/Langfuse trace，便于按 agent_name/model_name 过滤
     if "metadata" not in config:
         config["metadata"] = {}
 
@@ -477,23 +720,29 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
         }
     )
 
-    # Inject tracing callbacks at the graph invocation root so a single LangGraph
-    # run produces one trace with all node / LLM / tool calls as child spans,
-    # AND so the Langfuse handler sees ``on_chain_start(parent_run_id=None)`` and
-    # actually propagates ``langfuse_session_id`` / ``langfuse_user_id`` from
-    # ``config["metadata"]`` onto the trace. Without root-level attachment the
-    # model is a nested observation and the handler strips ``langfuse_*`` keys.
+    # ⚠️ 追踪回调必须在图根注入（而非模型级）——
+    # 这样整个 LangGraph run 产生单一 trace，所有 node/LLM/tool 作为子 span
+    # Langfuse handler 看到 on_chain_start(parent_run_id=None) 才会传播 session_id/user_id
     tracing_callbacks = build_tracing_callbacks()
     if tracing_callbacks:
         existing = config.get("callbacks") or []
         if not isinstance(existing, list):
             existing = list(existing)
+        # 追加而非覆盖：保留调用方已注入的 callback
         config["callbacks"] = [*existing, *tracing_callbacks]
 
+    # ═══════════════════════════════════════════════════════════════
+    # 步骤 5：加载技能 → 按白名单过滤（用于工具策略）
+    # ═══════════════════════════════════════════════════════════════
+    # 每个 Skill 可声明 allowed-tools 白名单，filter_tools_by_skill_allowed_tools
+    # 会在步骤 7 中剔除白名单外的工具
     skills_for_tool_policy = _load_enabled_skills_for_tool_policy(available_skills, app_config=resolved_app_config)
 
+    # ═══════════════════════════════════════════════════════════════
+    # 分支 A：Bootstrap Agent（首次启动，用于创建自定义 Agent）
+    # ═══════════════════════════════════════════════════════════════
     if is_bootstrap:
-        # Special bootstrap agent with minimal prompt for initial custom agent creation flow
+        # bootstrap 使用精简 prompt（仅含 setup_agent 相关指令）+ setup_agent 工具
         raw_tools = get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, app_config=resolved_app_config) + [setup_agent]
         filtered = filter_tools_by_skill_allowed_tools(raw_tools, skills_for_tool_policy)
         final_tools, setup = _assemble_deferred(filtered, enabled=resolved_app_config.tool_search.enabled)
@@ -504,20 +753,27 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             system_prompt=apply_prompt_template(
                 subagent_enabled=subagent_enabled,
                 max_concurrent_subagents=max_concurrent_subagents,
-                available_skills=set(["bootstrap"]),
+                available_skills=set(["bootstrap"]),   # 只有 bootstrap 技能
                 app_config=resolved_app_config,
                 deferred_names=setup.deferred_names,
             ),
             state_schema=ThreadState,
         )
 
-    # Custom agents can update their own SOUL.md / config via update_agent.
-    # The default agent (no agent_name) does not see this tool.
+    # ═══════════════════════════════════════════════════════════════
+    # 分支 B：默认 / 自定义 Agent（常规运行）
+    # ═══════════════════════════════════════════════════════════════
+    # 自定义 Agent（agent_name 非空）获得 update_agent 工具以持久化自我更新；
+    # 默认 Agent（agent_name=None）看不到此工具
     extra_tools = [update_agent] if agent_name else []
-    # Default lead agent (unchanged behavior)
+    # 按 agent_config.tool_groups 过滤工具（如配置了则只加载指定组的工具）
     raw_tools = get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, app_config=resolved_app_config)
+    # 步骤 6+7：技能工具策略过滤 → 延迟工具分离（MCP schema 延迟绑定）
     filtered = filter_tools_by_skill_allowed_tools(raw_tools + extra_tools, skills_for_tool_policy)
     final_tools, setup = _assemble_deferred(filtered, enabled=resolved_app_config.tool_search.enabled)
+
+    # 步骤 8+9：构建中间件链 + 渲染系统提示 → create_agent
+    # reasoning_effort 仅在非 bootstrap 分支传入（bootstrap 不需要深度推理）
     return create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False),
         tools=final_tools,
@@ -525,7 +781,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
         system_prompt=apply_prompt_template(
             subagent_enabled=subagent_enabled,
             max_concurrent_subagents=max_concurrent_subagents,
-            agent_name=agent_name,
+            agent_name=agent_name,              # 有 agent_name 时注入 SOUL.md + self_update 提示
             available_skills=set(agent_config.skills) if agent_config and agent_config.skills is not None else None,
             app_config=resolved_app_config,
             deferred_names=setup.deferred_names,

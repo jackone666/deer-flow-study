@@ -1,4 +1,26 @@
-"""限制每个模型响应中并发 subagent 工具调用数量的中间件。"""
+"""限制每个模型响应中并发 subagent 工具调用数量的中间件。
+
+比 Prompt 约束更可靠的硬限制。当 LLM 单次响应中产生超过 ``max_concurrent`` 个
+``task`` 工具调用时，只保留前 N 个，其余静默丢弃。
+
+示例（max_concurrent=3）：
+
+```python
+# 模型响应包含 5 个 task 调用
+AIMessage(tool_calls=[
+    {"name":"task", "args":{...}, "id":"t1"},  # ✅ 保留
+    {"name":"task", "args":{...}, "id":"t2"},  # ✅ 保留
+    {"name":"task", "args":{...}, "id":"t3"},  # ✅ 保留
+    {"name":"task", "args":{...}, "id":"t4"},  # ❌ 丢弃
+    {"name":"task", "args":{...}, "id":"t5"},  # ❌ 丢弃
+])
+
+# after_model 后：
+AIMessage(tool_calls=[t1, t2, t3])  # 只剩前3个
+# 日志：Truncated 2 excess task tool call(s) from model response (limit: 3)
+```
+
+非 ``task`` 类型的 tool_call 不参与计数、不会被截断。"""
 
 
 import logging

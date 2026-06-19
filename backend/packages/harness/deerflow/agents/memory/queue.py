@@ -1,4 +1,18 @@
-"""带去抖机制的记忆更新队列。"""
+"""带去抖机制的记忆更新队列。
+
+核心设计：
+- **去抖**：在 ``debounce_seconds``（默认 30s）内同一线程的多次入队会被合并为一次处理，避免高频对话触发大量 LLM 调用
+- **线程归属**：每个 ``(thread_id, user_id, agent_name)`` 三元组作为合并键，同键后入队覆盖先入队
+- **双模式**：``add()`` 按去抖延迟处理；``add_nowait()`` 立即处理（摘要丢弃前的紧急冲入）
+
+入队 → 处理流程：
+```
+MemoryMiddleware → queue.add(thread_id, messages)
+      ↓ (重置去抖定时器)
+30s 内同 thread 再次入队 → 合并并重置定时器
+      ↓ (定时器到期)
+_process_queue() → MemoryUpdater.update_memory() × N → memory.json
+```"""
 
 import logging
 import threading
@@ -14,13 +28,30 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConversationContext:
-    """待处理记忆更新的会话上下文。"""
+    """待处理记忆更新的会话上下文。
+
+    每个实例代表一个线程中需要被记忆更新的对话上下文。
+    通过 ``(thread_id, user_id, agent_name)`` 三元组在队列中去重合并。
+
+    示例：
+    ```python
+    ctx = ConversationContext(
+        thread_id="thread_abc",
+        messages=[HumanMessage("..."), AIMessage("...")],
+        agent_name="my-agent",
+        user_id="user_123",
+        correction_detected=True,
+        reinforcement_detected=False,
+    )
+    # ctx.timestamp → 2026-06-08T10:30:00Z（入队时自动生成）
+    ```
+    """
 
     thread_id: str
     messages: list[Any]
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     agent_name: str | None = None
-    user_id: str | None = None
+    user_id: str | None = None  # 入队时捕获（非 ContextVar），跨越 Timer 线程边界
     correction_detected: bool = False
     reinforcement_detected: bool = False
 
@@ -57,14 +88,33 @@ class MemoryUpdateQueue:
         correction_detected: bool = False,
         reinforcement_detected: bool = False,
     ) -> None:
-        """向更新队列添加一条会话。
+        """向更新队列添加一条会话（带去抖合并）。
+
+        同 ``(thread_id, user_id, agent_name)`` 在去抖窗口内多次调用会被合并：
+        后入队的消息**覆盖**先入队的消息（而非追加）。合并时 correction/reinforcement
+        标记取**逻辑或**（任一为真则保留）。
+
+        入队后自动重置去抖定时器——每次新消息到达都会把处理推迟 ``debounce_seconds`` 秒。
+
+        调用示例：
+        ```python
+        queue = get_memory_queue()
+        queue.add(
+            thread_id="thread_abc",
+            messages=filtered_msgs,
+            agent_name="default",
+            user_id="user_123",
+            correction_detected=True,
+        )
+        # → 30s 后自动调用 MemoryUpdater.update_memory()
+        ```
 
         Args:
             thread_id: 线程 ID。
-            messages: 会话消息列表。
+            messages: 筛选后的会话消息列表（通常由 ``filter_messages_for_memory()`` 产出）。
             agent_name: 若提供则按 Agent 隔离存储记忆；为 ``None`` 时使用全局记忆。
-            user_id: 入队时捕获的用户 ID，存入 ``ConversationContext`` 以跨越
-                ``threading.Timer`` 边界（ContextVar 不会跨原生线程传播）。
+            user_id: 入队时捕获的用户 ID（存入 ``ConversationContext`` 以跨越
+                ``threading.Timer`` 边界，ContextVar 不会跨原生线程传播）。
             correction_detected: 最近的对话轮次中是否出现显式纠正信号。
             reinforcement_detected: 最近的对话轮次中是否出现正向强化信号。
         """

@@ -575,10 +575,12 @@ class WechatChannel(Channel):
         """iLink ``/ilink/bot/getupdates`` 长轮询主循环。"""
         while self._running:
             try:
+                # 每轮轮询前确保已完成认证（含可能的 QR 码登录流程）
                 if not await self._ensure_authenticated():
                     await asyncio.sleep(self._retry_delay)
                     continue
 
+                # 使用游标 get_updates_buf 进行长轮询；超时=服务端建议值+5s缓冲
                 data = await self._request_json(
                     "/ilink/bot/getupdates",
                     {
@@ -588,9 +590,11 @@ class WechatChannel(Channel):
                     timeout=max(self._current_longpoll_timeout_seconds() + 5.0, 10.0),
                 )
 
+                # 检查响应状态码；非0表示异常
                 ret = data.get("ret", 0)
                 if ret not in (0, None):
                     errcode = data.get("errcode")
+                    # errcode=-14：bot_token 已过期，清空本地状态并停止轮询
                     if errcode == -14:
                         self._bot_token = ""
                         self._get_updates_buf = ""
@@ -608,13 +612,16 @@ class WechatChannel(Channel):
                     await asyncio.sleep(self._retry_delay)
                     continue
 
+                # 从响应中提取服务端建议的长轮询超时并更新本地缓存
                 self._update_longpoll_timeout(data)
 
+                # 更新轮询游标；仅在变化时持久化以减少磁盘 I/O
                 next_buf = data.get("get_updates_buf")
                 if isinstance(next_buf, str) and next_buf != self._get_updates_buf:
                     self._get_updates_buf = next_buf
                     self._save_state()
 
+                # 逐条处理收到的消息
                 for raw_message in data.get("msgs", []):
                     await self._handle_update(raw_message)
             except asyncio.CancelledError:
@@ -627,21 +634,26 @@ class WechatChannel(Channel):
         """将单条 iLink 更新转换为入站消息并发布。"""
         if not isinstance(raw_message, dict):
             return
+        # message_type=1 为用户消息；其他类型（如系统通知）忽略
         if raw_message.get("message_type") != 1:
             return
 
+        # 提取发送者 ID 并进行用户白名单校验
         chat_id = str(raw_message.get("from_user_id") or raw_message.get("ilink_user_id") or "").strip()
         if not chat_id or not self._check_user(chat_id):
             return
 
+        # 提取文本和文件附件；两者均为空则跳过
         text = self._extract_text(raw_message)
         files = await self._extract_inbound_files(raw_message)
         if not text and not files:
             return
 
+        # context_token 用于 iLink 会话关联，同时作为 thread_ts 实现线程归属
         context_token = str(raw_message.get("context_token") or "").strip()
         thread_ts = context_token or str(raw_message.get("client_id") or raw_message.get("msg_id") or "").strip() or None
 
+        # 双向缓存 context_token：按 chat_id 和 thread_ts 都可查询
         if context_token:
             self._context_tokens_by_chat[chat_id] = context_token
             if thread_ts:
@@ -686,6 +698,7 @@ class WechatChannel(Channel):
 
     async def _bind_via_qrcode(self) -> dict[str, Any]:
         """通过 iLink QR 码流程完成首次绑定。"""
+        # 步骤1：向 iLink 请求生成 QR 码
         qrcode_data = await self._request_public_get_json(
             "/ilink/bot/get_bot_qrcode",
             params={"bot_type": self._qrcode_bot_type},
@@ -694,17 +707,20 @@ class WechatChannel(Channel):
         if not qrcode:
             raise RuntimeError("iLink get_bot_qrcode did not return qrcode")
 
+        # QR 码图片的 base64 内容（可选，供日志/UI展示）
         qrcode_img_content = str(qrcode_data.get("qrcode_img_content") or "").strip()
         logger.warning("[WeChat] QR login required. qrcode=%s", qrcode)
         if qrcode_img_content:
             logger.warning("[WeChat] qrcode_img_content=%s", qrcode_img_content)
 
+        # 步骤2：持久化 pending 状态，供外部查询
         self._save_auth_state(
             status="pending",
             qrcode=qrcode,
             qrcode_img_content=qrcode_img_content or None,
         )
 
+        # 步骤3：轮询 QR 码状态，直到确认/过期/超时
         deadline = time.monotonic() + max(self._qrcode_poll_timeout, 1.0)
         while time.monotonic() < deadline:
             status_data = await self._request_public_get_json(
@@ -712,6 +728,7 @@ class WechatChannel(Channel):
                 params={"qrcode": qrcode},
             )
             status = str(status_data.get("status") or "").strip().lower()
+            # 用户已扫码确认：提取 bot_token 并持久化
             if status == "confirmed":
                 token = str(status_data.get("bot_token") or "").strip()
                 if not token:
@@ -729,6 +746,7 @@ class WechatChannel(Channel):
                     qrcode_img_content=qrcode_img_content or None,
                 )
 
+            # QR 码已失效：记录状态并抛异常
             if status in {"expired", "canceled", "cancelled", "invalid", "failed"}:
                 self._save_auth_state(
                     status=status,
@@ -737,8 +755,10 @@ class WechatChannel(Channel):
                 )
                 raise RuntimeError(f"iLink QR code flow ended with status={status}")
 
+            # 等待下次轮询
             await asyncio.sleep(max(self._qrcode_poll_interval, 0.1))
 
+        # 超时未确认
         self._save_auth_state(
             status="timeout",
             qrcode=qrcode,
