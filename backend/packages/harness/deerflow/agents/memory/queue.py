@@ -172,7 +172,11 @@ class MemoryUpdateQueue:
         correction_detected: bool,
         reinforcement_detected: bool,
     ) -> None:
-        """执行赋值。"""
+        """在持锁状态下写入队列，并合并同一记忆目标的重复入队。
+
+        合并键为 ``(thread_id, user_id, agent_name)``。同一个键在去抖窗口内
+        多次入队时，保留最新消息列表，同时把纠偏/强化标记做逻辑或，避免信号丢失。
+        """
         queue_key = self._queue_key(thread_id, user_id, agent_name)
         existing_context = next(
             (context for context in self._queue if self._queue_key(context.thread_id, context.user_id, context.agent_name) == queue_key),
@@ -201,7 +205,7 @@ class MemoryUpdateQueue:
 
     def _schedule_timer(self, delay_seconds: float) -> None:
         """在给定延迟后调度队列处理。"""
-        # Cancel existing timer if any
+        # 新消息到来时取消旧定时器，重新计算去抖窗口。
         if self._timer is not None:
             self._timer.cancel()
 
@@ -214,12 +218,12 @@ class MemoryUpdateQueue:
 
     def _process_queue(self) -> None:
         """处理所有已入队的会话上下文。"""
-        # Import here to avoid circular dependency
+        # 延迟导入避免 queue.py 与 updater.py 在模块加载阶段循环依赖。
         from deerflow.agents.memory.updater import MemoryUpdater
 
         with self._lock:
             if self._processing:
-                # Preserve immediate flush semantics even if another worker is active.
+                # 如果已有 worker 在处理，立即再排一次，保证 add_nowait 不被吞掉。
                 self._schedule_timer(0)
                 return
 
@@ -254,7 +258,7 @@ class MemoryUpdateQueue:
                 except Exception as e:
                     logger.error("Error updating memory for thread %s: %s", context.thread_id, e)
 
-                # Small delay between updates to avoid rate limiting
+                # 多条记忆更新之间稍作间隔，降低触发模型限流的概率。
                 if len(contexts_to_process) > 1:
                     time.sleep(0.5)
 
@@ -277,8 +281,7 @@ class MemoryUpdateQueue:
     def flush_nowait(self) -> None:
         """在后台线程中立即开始处理队列。"""
         with self._lock:
-            # Daemon thread: queued messages may be lost if the process exits
-            # before _process_queue completes. Acceptable for best-effort memory updates.
+            # 后台守护线程可能在进程退出时被中断；记忆更新是 best-effort，可接受。
             self._schedule_timer(0)
 
     def clear(self) -> None:
@@ -306,7 +309,7 @@ class MemoryUpdateQueue:
             return self._processing
 
 
-# Global singleton instance
+# 全局单例：所有 MemoryMiddleware 和 summary hook 共享同一个去抖队列。
 _memory_queue: MemoryUpdateQueue | None = None
 _queue_lock = threading.Lock()
 

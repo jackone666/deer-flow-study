@@ -84,7 +84,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
         if not config.enabled:
             return None
 
-        # Get thread ID from runtime context first, then fall back to LangGraph's configurable metadata
+        # thread_id 是记忆按会话合并的主键：优先取运行时 context，回退到 LangGraph configurable。
         thread_id = runtime.context.get("thread_id") if runtime.context else None
         if thread_id is None:
             config_data = get_config()
@@ -93,29 +93,26 @@ class MemoryMiddleware(AgentMiddleware[MemoryMiddlewareState]):
             logger.debug("No thread_id in context, skipping memory update")
             return None
 
-        # Get messages from state
+        # 只从 LangGraph 状态读取消息；本中间件不直接访问前端或事件流。
         messages = state.get("messages", [])
         if not messages:
             logger.debug("No messages in state, skipping memory update")
             return None
 
-        # Filter to only keep user inputs and final assistant responses
+        # 记忆只关心用户输入与最终助手回复，工具调用过程由过滤函数统一剔除。
         filtered_messages = filter_messages_for_memory(messages)
 
-        # Only queue if there's meaningful conversation
-        # At minimum need one user message and one assistant response
+        # 至少要有一问一答才值得抽取长期记忆；单边消息没有稳定语义。
         user_messages = [m for m in filtered_messages if getattr(m, "type", None) == "human"]
         assistant_messages = [m for m in filtered_messages if getattr(m, "type", None) == "ai"]
 
         if not user_messages or not assistant_messages:
             return None
 
-        # Queue the filtered conversation for memory update
+        # 检测用户纠偏/正向反馈，作为 MemoryUpdater 调整事实置信度和类别的提示信号。
         correction_detected = detect_correction(filtered_messages)
         reinforcement_detected = not correction_detected and detect_reinforcement(filtered_messages)
-        # Capture user_id at enqueue time while the request context is still alive.
-        # threading.Timer fires on a different thread where ContextVar values are not
-        # propagated, so we must store user_id explicitly in ConversationContext.
+        # user_id 必须在入队时捕获：threading.Timer 会切到新线程，ContextVar 不会自动传播。
         user_id = get_effective_user_id()
         queue = get_memory_queue()
         queue.add(

@@ -95,8 +95,7 @@ def _refresh_enabled_skills_cache_worker() -> None:
                 _enabled_skills_refresh_event.set()
                 return
 
-            # A newer invalidation happened while loading. Keep the worker alive
-            # and loop again so the cache always converges on the latest version.
+            # 加载过程中发生了新的失效事件：继续循环，直到缓存收敛到最新版本。
             _enabled_skills_cache = None
 
 
@@ -262,7 +261,7 @@ def _build_available_subagents_description(available_names: list[str], bash_avai
         ),
     }
 
-    # Lazy import moved outside loop to avoid repeated import overhead
+    # 延迟导入放在循环外，避免每个子代理类型都重复导入注册表。
     from deerflow.subagents.registry import get_subagent_config
 
     lines = []
@@ -272,7 +271,7 @@ def _build_available_subagents_description(available_names: list[str], bash_avai
         else:
             config = get_subagent_config(name, app_config=app_config)
             if config is not None:
-                desc = config.description.split("\n")[0].strip()  # First line only for brevity
+                desc = config.description.split("\n")[0].strip()  # 只取第一行，避免系统提示过长。
                 lines.append(f"- **{name}**: {desc}")
 
     return "\n".join(lines)
@@ -292,8 +291,7 @@ def _build_subagent_section(max_concurrent: int, *, app_config: AppConfig | None
     available_names = get_available_subagent_names(app_config=app_config) if app_config is not None else get_available_subagent_names()
     bash_available = "bash" in available_names
 
-    # Dynamically build subagent type descriptions from registry (aligned with Codex's
-    # agent_type_description pattern where all registered roles are listed in the tool spec).
+    # 从注册表动态生成子代理说明，让 system prompt 始终反映当前可用角色。
     available_subagents = _build_available_subagents_description(available_names, bash_available, app_config=app_config)
     direct_tool_examples = "bash, ls, read_file, web_search, etc." if bash_available else "ls, read_file, web_search, etc."
     direct_execution_example = (
@@ -667,7 +665,11 @@ def _get_cached_skills_prompt_section(
     container_base_path: str,
     skill_evolution_section: str,
 ) -> str:
-    """执行赋值。"""
+    """根据技能签名生成可缓存的技能提示片段。
+
+    该函数只接收可哈希的签名数据，方便 ``lru_cache`` 缓存；调用方负责把
+    ``Skill`` 对象转换成 ``(name, description, category, location)`` 元组。
+    """
     filtered = [(name, description, category, location) for name, description, category, location in skill_signature if available_skills_key is None or name in available_skills_key]
     skills_list = ""
     if filtered:
@@ -769,7 +771,7 @@ def get_skills_prompt_section(available_skills: set[str] | None = None, *, app_c
 
 def get_agent_soul(agent_name: str | None) -> str:
     """加载并以 ``<soul>`` 标签包裹的自定义 Agent 人格描述。"""
-    # Append SOUL.md (agent personality) if present
+    # 自定义 Agent 的 SOUL.md 是静态人格上下文，随 system prompt 一起注入。
     soul = load_agent_soul(agent_name)
     if soul:
         return f"<soul>\n{soul}\n</soul>\n" if soul else ""
@@ -966,7 +968,7 @@ def apply_prompt_template(
     Returns:
         渲染完成的系统提示字符串（不含记忆/日期，这些由 DynamicContextMiddleware 动态注入）。
     """
-    # Include subagent section only if enabled (from runtime parameter)
+    # 子代理片段只在运行期显式启用时进入 system prompt，避免默认上下文膨胀。
     n = max_concurrent_subagents
     subagent_section = _build_subagent_section(n, app_config=app_config) if subagent_enabled else ""
 
@@ -988,21 +990,19 @@ def apply_prompt_template(
         else ""
     )
 
-    # Get skills section
+    # 技能片段是静态上下文，按可用技能白名单渲染并缓存。
     skills_section = get_skills_prompt_section(available_skills, app_config=app_config)
 
-    # Get deferred tools section (tool_search)
+    # 延迟工具片段只列名称，不列 schema；真正 schema 由 tool_search 按需提升。
     deferred_tools_section = get_deferred_tools_prompt_section(deferred_names=deferred_names)
 
-    # Build ACP agent section only if ACP agents are configured
+    # ACP 和自定义挂载属于外部工作区上下文，仅在配置存在时追加。
     acp_section = _build_acp_section(app_config=app_config)
     custom_mounts_section = _build_custom_mounts_section(app_config=app_config)
     acp_and_mounts_section = "\n".join(section for section in (acp_section, custom_mounts_section) if section)
 
-    # Build and return the fully static system prompt.
-    # Memory and current date are injected per-turn via DynamicContextMiddleware
-    # as a <system-reminder> in the first HumanMessage, keeping this prompt
-    # identical across users and sessions for maximum prefix-cache reuse.
+    # 返回完全静态的 system prompt；记忆和日期由 DynamicContextMiddleware
+    # 逐轮注入，保证这里的字符串跨用户/会话尽量一致。
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name or "DeerFlow 2.0",
         soul=get_agent_soul(agent_name),

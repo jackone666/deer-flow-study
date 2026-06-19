@@ -36,7 +36,7 @@ def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[s
         return new or []
     if new is None:
         return existing
-    # Use dict.fromkeys to deduplicate while preserving order
+    # dict.fromkeys 可以在保持顺序的同时去重。
     return list(dict.fromkeys(existing + new))
 
 
@@ -50,10 +50,10 @@ def merge_viewed_images(existing: dict[str, ViewedImageData] | None, new: dict[s
         return new or {}
     if new is None:
         return existing
-    # Special case: empty dict means clear all viewed images
+    # 空字典是显式清空信号，用于图片上下文被消费后的状态重置。
     if len(new) == 0:
         return {}
-    # Merge dictionaries, new values override existing ones for same keys
+    # 同一路径图片以新值覆盖旧值。
     return {**existing, **new}
 
 
@@ -116,5 +116,5 @@ class ThreadState(AgentState):
     artifacts: Annotated[list[str], merge_artifacts]
     todos: Annotated[list | None, merge_todos]
     uploaded_files: NotRequired[list[dict] | None]
-    viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}
+    viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path 映射到 {base64, mime_type}
     promoted: Annotated[PromotedTools | None, merge_promoted]

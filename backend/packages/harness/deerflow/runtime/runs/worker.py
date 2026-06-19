@@ -40,7 +40,7 @@ from .schemas import RunStatus
 
 logger = logging.getLogger(__name__)
 
-# Valid stream_mode values for LangGraph's graph.astream()
+# LangGraph graph.astream() 支持的原生 stream_mode 集合。
 _VALID_LG_MODES = {"values", "updates", "checkpoints", "tasks", "debug", "messages", "custom"}
 
 
@@ -136,7 +136,7 @@ def _agent_factory_supports_app_config(agent_factory: Any) -> bool:
     try:
         return _cached_agent_factory_supports_app_config(agent_factory)
     except TypeError:
-        # Some callable instances are unhashable; fall back to a direct check.
+        # 部分可调用实例不可哈希，无法进 lru_cache；退回直接检查。
         return _compute_agent_factory_supports_app_config(agent_factory)
 
 
@@ -170,7 +170,7 @@ async def run_agent(
         interrupt_after: 指定的节点在执行后中断。
     """
 
-    # Unpack infrastructure dependencies from RunContext.
+    # 拆出本次运行所需的基础设施依赖，后续会挂到 Agent 图或回调上。
     checkpointer = ctx.checkpointer
     store = ctx.store
     event_store = ctx.event_store
@@ -187,7 +187,7 @@ async def run_agent(
 
     journal = None
 
-    # Track whether "events" was requested but skipped
+    # gateway 模式无法同时使用 events 与 values 快照，因此只记录并跳过。
     if "events" in requested_modes:
         logger.info(
             "Run %s: 'events' stream_mode not supported in gateway (requires astream_events + checkpoint callbacks). Skipping.",
@@ -195,12 +195,8 @@ async def run_agent(
         )
 
     try:
-        # Initialize RunJournal + write human_message event.
-        # These are inside the try block so any exception (e.g. a DB
-        # error writing the event) flows through the except/finally
-        # path that publishes an "end" event to the SSE bridge —
-        # otherwise a failure here would leave the stream hanging
-        # with no terminator.
+        # 初始化 RunJournal。放在 try 内是为了让事件存储失败也能进入统一的
+        # except/finally 路径，最终向 SSE bridge 发布 end，避免前端流悬挂。
         if event_store is not None:
             from deerflow.runtime.journal import RunJournal
 
@@ -212,10 +208,10 @@ async def run_agent(
                 progress_reporter=lambda snapshot: run_manager.update_run_progress(run_id, **snapshot),
             )
 
-        # 1. Mark running
+        # 1. 标记 Run 进入运行态。
         await run_manager.set_status(run_id, RunStatus.running)
 
-        # Snapshot the latest pre-run checkpoint so rollback can restore it.
+        # 运行前保存 checkpoint 快照，失败或回滚时可恢复到本轮之前。
         if checkpointer is not None:
             try:
                 config_for_check = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
@@ -233,7 +229,7 @@ async def run_agent(
                 snapshot_capture_failed = True
                 logger.warning("Could not capture pre-run checkpoint snapshot for run %s", run_id, exc_info=True)
 
-        # 2. Publish metadata — useStream needs both run_id AND thread_id
+        # 2. 发布元数据；前端 useStream 同时需要 run_id 和 thread_id。
         await bridge.publish(
             run_id,
             "metadata",
@@ -243,34 +239,27 @@ async def run_agent(
             },
         )
 
-        # 3. Build the agent
+        # 3. 构建 Agent 图。
         from langchain_core.runnables import RunnableConfig
         from langgraph.runtime import Runtime
 
-        # Inject runtime context so middlewares and tools (via ToolRuntime.context) can
-        # access thread-level data. langgraph-cli does this automatically; we must do it
-        # manually here because we drive the graph through ``agent.astream(config=...)``
-        # without passing the official ``context=`` parameter.
+        # 手动把运行时上下文注入 config 和 __pregel_runtime。gateway 直接调用
+        # agent.astream(config=...)，不会像 langgraph-cli 那样自动传 context。
+        # 这一步决定中间件和工具能否通过 runtime.context 读到 thread_id/run_id。
         runtime_ctx = _build_runtime_context(thread_id, run_id, config.get("context"), ctx.app_config)
-        # Expose the run-scoped journal under a sentinel key so middleware can
-        # write audit events (e.g. SafetyFinishReasonMiddleware recording
-        # suppressed tool calls). Double-underscore prefix marks it as a
-        # runtime-internal channel; user code must not depend on the key name.
+        # 将本轮 RunJournal 暴露给中间件，用于写审计事件；双下划线前缀表示内部通道。
         if journal is not None:
             runtime_ctx["__run_journal"] = journal
         _install_runtime_context(config, runtime_ctx)
         runtime = Runtime(context=cast(Any, runtime_ctx), store=store)
         config.setdefault("configurable", {})["__pregel_runtime"] = runtime
 
-        # Inject RunJournal as a LangChain callback handler.
-        # on_llm_end captures token usage; on_chain_start/end captures lifecycle.
+        # RunJournal 也作为 LangChain callback：记录 LLM token 和链路生命周期事件。
         if journal is not None:
             config.setdefault("callbacks", []).append(journal)
 
-        # Inject Langfuse trace-attribute metadata so the langchain CallbackHandler
-        # can lift session_id / user_id / trace_name / tags onto the root trace.
-        # Shared helper with ``DeerFlowClient.stream`` so both entry points stay
-        # in sync; caller-provided metadata wins via setdefault inside the helper.
+        # 注入 Langfuse trace 属性，供 callback handler 提升到根 trace。
+        # 与 DeerFlowClient.stream 共用 helper，保持两个入口的元数据语义一致。
         inject_langfuse_metadata(
             config,
             thread_id=thread_id,
@@ -280,8 +269,7 @@ async def run_agent(
             environment=os.environ.get("DEER_FLOW_ENV") or os.environ.get("ENVIRONMENT"),
         )
 
-        # Resolve after runtime context installation so context/configurable reflect
-        # the agent name that this run will actually execute.
+        # 在 runtime context 安装后再解析 run_name，确保 agent_name 反映实际执行目标。
         config.setdefault("run_name", resolve_root_run_name(config, record.assistant_id))
         runnable_config = RunnableConfig(**config)
         if ctx.app_config is not None and _agent_factory_supports_app_config(agent_factory):
@@ -289,10 +277,7 @@ async def run_agent(
         else:
             agent = agent_factory(config=runnable_config)
 
-        # Capture the effective (resolved) model name from the agent's metadata.
-        # _resolve_model_name in agent.py may return the default model if the
-        # requested name is not in the allowlist — this update ensures the
-        # persisted model_name reflects the actual model used.
+        # Agent 工厂可能把非法模型名回退到默认模型；这里同步持久化“实际使用模型”。
         if record.model_name is not None:
             resolved = getattr(agent, "metadata", {}) or {}
             if isinstance(resolved, dict):
@@ -300,34 +285,33 @@ async def run_agent(
                 if effective and effective != record.model_name:
                     await run_manager.update_model_name(record.run_id, effective)
 
-        # 4. Attach checkpointer and store
+        # 4. 挂载 checkpointer 和 store，决定消息历史、状态和持久化读写。
         if checkpointer is not None:
             agent.checkpointer = checkpointer
         if store is not None:
             agent.store = store
 
-        # 5. Set interrupt nodes
+        # 5. 配置图中断点，用于人工审批或调试。
         if interrupt_before:
             agent.interrupt_before_nodes = interrupt_before
         if interrupt_after:
             agent.interrupt_after_nodes = interrupt_after
 
-        # 6. Build LangGraph stream_mode list
-        #    "events" is NOT a valid astream mode — skip it
-        #    "messages-tuple" maps to LangGraph's "messages" mode
+        # 6. 构造 LangGraph stream_mode 列表：
+        #    events 不是 astream 模式；messages-tuple 映射为 LangGraph 的 messages。
         lg_modes: list[str] = []
         for m in requested_modes:
             if m == "messages-tuple":
                 lg_modes.append("messages")
             elif m == "events":
-                # Skipped — see log above
+                    # 已在上方记录原因，这里只跳过。
                 continue
             elif m in _VALID_LG_MODES:
                 lg_modes.append(m)
         if not lg_modes:
             lg_modes = ["values"]
 
-        # Deduplicate while preserving order
+        # 去重但保持请求顺序，避免重复订阅同一种流。
         seen: set[str] = set()
         deduped: list[str] = []
         for m in lg_modes:
@@ -338,9 +322,9 @@ async def run_agent(
 
         logger.info("Run %s: streaming with modes %s (requested: %s)", run_id, lg_modes, requested_modes)
 
-        # 7. Stream using graph.astream
+        # 7. 通过 graph.astream 推送状态、消息增量和自定义事件。
         if len(lg_modes) == 1 and not stream_subgraphs:
-            # Single mode, no subgraphs: astream yields raw chunks
+            # 单模式且无子图时，astream 直接产出原始 chunk。
             single_mode = lg_modes[0]
             async for chunk in agent.astream(graph_input, config=runnable_config, stream_mode=single_mode):
                 if record.abort_event.is_set():
@@ -350,7 +334,7 @@ async def run_agent(
                 sse_event = _lg_mode_to_sse_event(single_mode)
                 await bridge.publish(run_id, sse_event, serialize(chunk, mode=single_mode))
         else:
-            # Multiple modes or subgraphs: astream yields tuples
+            # 多模式或子图时，astream 产出带模式/命名空间的 tuple。
             async for item in agent.astream(
                 graph_input,
                 config=runnable_config,
@@ -431,7 +415,7 @@ async def run_agent(
         )
 
     finally:
-        # Flush any buffered journal events and persist completion data
+        # 冲刷 RunJournal 缓冲事件，并持久化本轮完成数据。
         if journal is not None:
             try:
                 await journal.flush()
@@ -439,13 +423,13 @@ async def run_agent(
                 logger.warning("Failed to flush journal for run %s", run_id, exc_info=True)
 
             try:
-                # Persist token usage + convenience fields to RunStore
+                # 持久化 token 用量和首尾消息等便捷字段。
                 completion = journal.get_completion_data()
                 await run_manager.update_run_completion(run_id, status=record.status.value, **completion)
             except Exception:
                 logger.warning("Failed to persist run completion for %s (non-fatal)", run_id, exc_info=True)
 
-        # Sync title from checkpoint to threads_meta.display_name
+        # 从 checkpoint 同步标题到线程元数据，供侧边栏展示。
         if checkpointer is not None and thread_store is not None:
             try:
                 ckpt_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
@@ -458,7 +442,7 @@ async def run_agent(
             except Exception:
                 logger.debug("Failed to sync title for thread %s (non-fatal)", thread_id)
 
-        # Update threads_meta status based on run outcome
+        # 根据 Run 结果更新线程状态，成功后回到 idle。
         if thread_store is not None:
             try:
                 final_status = "idle" if record.status == RunStatus.success else record.status.value
@@ -471,7 +455,7 @@ async def run_agent(
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 
@@ -598,7 +582,7 @@ def _lg_mode_to_sse_event(mode: str) -> str:
     Returns:
         与 SSE 协议约定一致的事件名。
     """
-    # All LG modes map 1:1 to SSE event names — "messages" stays "messages"
+    # 当前协议中 LangGraph 模式名与 SSE 事件名一一对应。
     return mode
 
 
@@ -640,9 +624,7 @@ def _extract_llm_error_fallback_message(value: Any) -> str | None:
     Returns:
         找到时返回错误描述，否则 ``None``。
     """
-    # Fast path: large state chunks produced by stream_mode="values" have a
-    # top-level "messages" list. Scanning only that list avoids expensive deep
-    # recursion into large state dicts.
+    # 快路径：values chunk 通常有顶层 messages，扫描它即可，避免递归大状态对象。
     if isinstance(value, dict):
         messages = value.get("messages")
         if isinstance(messages, (list, tuple)):
@@ -650,26 +632,15 @@ def _extract_llm_error_fallback_message(value: Any) -> str | None:
                 result = _try_extract_from_message(msg)
                 if result is not None:
                     return result
-            # Fallback marker is attached to an AI message in the messages
-            # channel; it will never appear elsewhere in a values chunk.
+            # fallback 标记只会挂在 messages 通道的 AIMessage 上。
             return None
-        # No top-level "messages" — this is likely an "updates" chunk (small
-        # dict keyed by node name). Fall through to deep walk, which is cheap
-        # for these payloads.
+        # 没有顶层 messages 时，多半是 updates chunk；体积小，可以走递归扫描。
 
-    # Deep walk for updates / messages / tuple / list modes. Payloads are
-    # small, so full recursion is acceptable here.
+    # updates/messages/tuple/list 模式的载荷较小，完整递归扫描成本可接受。
     seen: set[int] = set()
 
     def walk(obj: Any) -> str | None:
-        """执行赋值。
-        
-                Args:
-                    obj: Any: 参数说明。
-        
-                Returns:
-                    str | None。
-        """
+        """递归扫描对象树，找到第一条 LLM fallback 错误消息。"""
         oid = id(obj)
         if oid in seen:
             return None
@@ -755,5 +726,5 @@ def _unpack_stream_item(
         mode, chunk = item
         return str(mode), chunk
 
-    # Fallback: single-element output from first mode
+    # 兜底：按第一个模式解释单元素输出。
     return lg_modes[0] if lg_modes else None, item

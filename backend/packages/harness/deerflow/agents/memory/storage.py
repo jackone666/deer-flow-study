@@ -102,10 +102,10 @@ class FileMemoryStorage(MemoryStorage):
 
     def __init__(self):
         """初始化文件记忆存储。"""
-        # Per-user/agent memory cache: keyed by (user_id, agent_name) tuple (None = global)
-        # Value: (memory_data, file_mtime)
+        # 记忆缓存按 (user_id, agent_name) 隔离；None 表示全局维度。
+        # 值为 (memory_data, file_mtime)，mtime 变化时自动重新加载。
         self._memory_cache: dict[tuple[str | None, str | None], tuple[dict[str, Any], float | None]] = {}
-        # Guards all reads and writes to _memory_cache across concurrent callers.
+        # 多线程读写缓存时用同一把锁保护。
         self._cache_lock = threading.Lock()
 
     def _validate_agent_name(self, agent_name: str) -> None:
@@ -129,7 +129,7 @@ class FileMemoryStorage(MemoryStorage):
             if config.storage_path and Path(config.storage_path).is_absolute():
                 return Path(config.storage_path)
             return get_paths().user_memory_file(user_id)
-        # Legacy: no user_id
+        # 兼容旧布局：没有 user_id 时仍支持按 agent 或全局文件存储。
         if agent_name is not None:
             self._validate_agent_name(agent_name)
             return get_paths().agent_memory_file(agent_name)
@@ -156,7 +156,7 @@ class FileMemoryStorage(MemoryStorage):
 
     @staticmethod
     def _cache_key(agent_name: str | None = None, *, user_id: str | None = None) -> tuple[str | None, str | None]:
-        """返回值。"""
+        """返回记忆缓存键，顺序与文件路径隔离维度保持一致。"""
         return (user_id, agent_name)
 
     def load(self, agent_name: str | None = None, *, user_id: str | None = None) -> dict[str, Any]:
@@ -226,9 +226,7 @@ class FileMemoryStorage(MemoryStorage):
 
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            # Shallow-copy before adding lastUpdated so the caller's dict is not
-            # mutated as a side-effect, and the cache reference is not silently
-            # updated before the file write succeeds.
+            # 写入前浅拷贝并更新时间戳，避免调用方对象在保存失败时被提前污染。
             memory_data = {**memory_data, "lastUpdated": utc_now_iso_z()}
 
             temp_path = file_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
@@ -275,7 +273,7 @@ def get_memory_storage() -> MemoryStorage:
             module = importlib.import_module(module_path)
             storage_class = getattr(module, class_name)
 
-            # Validate that the configured storage is a MemoryStorage implementation
+            # 只接受 MemoryStorage 子类，避免配置错误对象破坏 load/save 契约。
             if not isinstance(storage_class, type):
                 raise TypeError(f"Configured memory storage '{storage_class_path}' is not a class: {storage_class!r}")
             if not issubclass(storage_class, MemoryStorage):

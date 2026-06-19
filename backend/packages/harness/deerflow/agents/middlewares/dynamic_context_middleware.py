@@ -85,10 +85,14 @@ class DynamicContextMiddleware(AgentMiddleware):
         self._app_config = app_config
 
     def _build_full_reminder(self) -> str:
-        """构建首轮注入的完整提醒内容（记忆 + 日期）。"""
+        """构建首轮注入的完整提醒内容（记忆 + 日期）。
+
+        该内容最终会成为隐藏的 ``HumanMessage``，而不是拼进静态 system prompt。
+        这样每个用户不同的长期记忆不会破坏 system prompt 的前缀缓存。
+        """
         from deerflow.agents.lead_agent.prompt import _get_memory_context
 
-        # Memory injection is gated by injection_enabled; date is always included.
+        # 记忆注入受 injection_enabled 控制；当前日期始终注入，保证模型知道“今天”。
         injection_enabled = self._app_config.memory.injection_enabled if self._app_config else True
         memory_context = _get_memory_context(self._agent_name, app_config=self._app_config) if injection_enabled else ""
         current_date = datetime.now().strftime("%Y-%m-%d, %A")
@@ -96,7 +100,7 @@ class DynamicContextMiddleware(AgentMiddleware):
         lines: list[str] = ["<system-reminder>"]
         if memory_context:
             lines.append(memory_context.strip())
-            lines.append("")  # blank line separating memory from date
+            lines.append("")  # 空行把长期记忆和日期标签隔开，方便模型解析。
         lines.append(f"<current_date>{current_date}</current_date>")
         lines.append("</system-reminder>")
 
@@ -139,7 +143,13 @@ class DynamicContextMiddleware(AgentMiddleware):
         return reminder_msg, user_msg
 
     def _inject(self, state) -> dict | None:
-        """执行赋值。"""
+        """根据当前消息状态决定是否注入动态上下文。
+
+        注入策略：
+        1. 从未注入过：在首条真实用户消息前插入完整提醒（记忆 + 日期）。
+        2. 已注入且日期未变：不做任何事，避免重复污染上下文。
+        3. 跨午夜：只在当前轮用户消息前插入轻量日期提醒。
+        """
         messages = list(state.get("messages", []))
         if not messages:
             return None
@@ -154,7 +164,7 @@ class DynamicContextMiddleware(AgentMiddleware):
         )
 
         if last_date is None:
-            # ── First turn: inject full reminder as a separate HumanMessage ─────
+            # 首轮：用单独的隐藏 HumanMessage 承载完整提醒，并保留原用户消息。
             first_idx = next((i for i, m in enumerate(messages) if _is_user_injection_target(m)), None)
             if first_idx is None:
                 return None
@@ -169,10 +179,10 @@ class DynamicContextMiddleware(AgentMiddleware):
             return {"messages": [reminder_msg, user_msg]}
 
         if last_date == current_date:
-            # ── Same day: nothing to do ──────────────────────────────────────────
+            # 同一天内不重复注入，避免每轮都增加相同上下文。
             return None
 
-        # ── Midnight crossed: inject date-update reminder as a separate HumanMessage ──
+        # 跨午夜：只补一条日期更新，不重新注入整段记忆。
         last_human_idx = next((i for i in reversed(range(len(messages))) if _is_user_injection_target(messages[i])), None)
         if last_human_idx is None:
             return None

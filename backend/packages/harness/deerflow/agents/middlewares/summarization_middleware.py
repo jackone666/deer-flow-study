@@ -129,7 +129,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         return await self._amaybe_summarize(state, runtime)
 
     def _maybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
-        """执行赋值。"""
+        """同步路径：在模型调用前按阈值决定是否压缩历史消息。"""
         messages = state["messages"]
         self._ensure_message_ids(messages)
 
@@ -156,7 +156,7 @@ class DeerFlowSummarizationMiddleware(SummarizationMiddleware):
         }
 
     async def _amaybe_summarize(self, state: AgentState, runtime: Runtime) -> dict | None:
-        """执行赋值。"""
+        """异步路径：在模型调用前按阈值决定是否压缩历史消息。"""
         messages = state["messages"]
         self._ensure_message_ids(messages)
 

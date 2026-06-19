@@ -171,14 +171,14 @@ def _count_tokens(text: str, encoding_name: str = "cl100k_base") -> int:
         文本中的 token 数。
     """
     if not TIKTOKEN_AVAILABLE:
-        # Fallback to character-based estimation if tiktoken is not available
+        # tiktoken 不可用时，用字符数粗略估算，保证功能可继续运行。
         return len(text) // 4
 
     try:
         encoding = tiktoken.get_encoding(encoding_name)
         return len(encoding.encode(text))
     except Exception:
-        # Fallback to character-based estimation on error
+        # 编码加载失败时同样退回字符估算。
         return len(text) // 4
 
 

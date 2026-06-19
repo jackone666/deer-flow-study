@@ -51,11 +51,9 @@ from deerflow.models import create_chat_model
 logger = logging.getLogger(__name__)
 
 
-# Thread pool for offloading sync memory updates when called from an async
-# context.  Unlike the previous asyncio.run() approach, this runs *sync*
-# model.invoke() calls — no event loop is created, so the langchain async
-# httpx client pool (globally cached via @lru_cache) is never touched and
-# cross-loop connection reuse is impossible.
+# 同步记忆更新若从异步上下文触发，会卸载到该线程池执行。
+# 这里故意调用同步 model.invoke()，不创建新的 event loop，从而避免 LangChain
+# 全局缓存的异步 httpx 连接池被跨 loop 复用。
 _SYNC_MEMORY_UPDATER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4,
     thread_name_prefix="memory-updater-sync",
@@ -232,11 +230,7 @@ def _extract_text(content: Any) -> str:
         pending_str_parts: list[str] = []
 
         def flush_pending_str_parts() -> None:
-            """执行相应操作。
-            
-                    Returns:
-                        None。
-            """
+            """把连续字符串分块合并为一个文本片段。"""
             if pending_str_parts:
                 pieces.append("".join(pending_str_parts))
                 pending_str_parts.clear()
@@ -414,9 +408,8 @@ def _parse_memory_update_response(response_content: Any) -> dict[str, Any]:
     raise json.JSONDecodeError("No valid memory update JSON object found", response_text, 0)
 
 
-# Matches sentences that describe a file-upload *event* rather than general
-# file-related work.  Deliberately narrow to avoid removing legitimate facts
-# such as "User works with CSV files" or "prefers PDF export".
+# 只匹配“上传事件”本身，而不匹配一般文件工作偏好。
+# 规则刻意保守，避免误删“用户常处理 CSV”或“偏好 PDF 导出”这类长期事实。
 _UPLOAD_SENTENCE_RE = re.compile(
     r"[^.!?]*\b(?:"
     r"upload(?:ed|ing)?(?:\s+\w+){0,3}\s+(?:file|files?|document|documents?|attachment|attachments?)"
@@ -434,7 +427,7 @@ def _strip_upload_mentions_from_memory(memory_data: dict[str, Any]) -> dict[str,
     上传文件是会话范围的；将上传事件写入长期记忆会导致 Agent 在未来会话中
     试图查找实际不存在的文件。
     """
-    # Scrub summaries in user/history sections
+    # 清理 user/history 摘要中关于临时上传文件的句子。
     for section in ("user", "history"):
         section_data = memory_data.get(section, {})
         for _key, val in section_data.items():
@@ -443,7 +436,7 @@ def _strip_upload_mentions_from_memory(memory_data: dict[str, Any]) -> dict[str,
                 cleaned = re.sub(r"  +", " ", cleaned)
                 val["summary"] = cleaned
 
-    # Also remove any facts that describe upload events
+    # 同时移除描述上传事件的事实，避免后续会话引用已失效的上传路径。
     facts = memory_data.get("facts", [])
     if facts:
         memory_data["facts"] = [f for f in facts if not _UPLOAD_SENTENCE_RE.search(f.get("content", ""))]
@@ -542,8 +535,7 @@ class MemoryUpdater:
     ) -> bool:
         """解析模型响应、应用更新并持久化记忆。"""
         update_data = _parse_memory_update_response(response_content)
-        # Deep-copy before in-place mutation so a subsequent save() failure
-        # cannot corrupt the still-cached original object reference.
+        # 先深拷贝再原地修改：即使 save() 失败，也不会污染存储层缓存中的原始对象。
         updated_memory = self._apply_updates(copy.deepcopy(current_memory), update_data, thread_id)
         updated_memory = _strip_upload_mentions_from_memory(updated_memory)
         return get_memory_storage().save(updated_memory, agent_name, user_id=user_id)
@@ -727,7 +719,7 @@ class MemoryUpdater:
         config = get_memory_config()
         now = utc_now_iso_z()
 
-        # Update user sections
+        # 更新用户当前上下文三段：工作、个人偏好、近期关注。
         user_updates = update_data.get("user", {})
         for section in ["workContext", "personalContext", "topOfMind"]:
             section_data = user_updates.get(section, {})
@@ -737,7 +729,7 @@ class MemoryUpdater:
                     "updatedAt": now,
                 }
 
-        # Update history sections
+        # 更新历史上下文三段：近期、较早、长期背景。
         history_updates = update_data.get("history", {})
         for section in ["recentMonths", "earlierContext", "longTermBackground"]:
             section_data = history_updates.get(section, {})
@@ -747,12 +739,12 @@ class MemoryUpdater:
                     "updatedAt": now,
                 }
 
-        # Remove facts
+        # 先删除与新信息冲突的旧事实。
         facts_to_remove = set(update_data.get("factsToRemove", []))
         if facts_to_remove:
             current_memory["facts"] = [f for f in current_memory.get("facts", []) if f.get("id") not in facts_to_remove]
 
-        # Add new facts
+        # 再追加新事实，并补充 id/source/createdAt 等存储字段。
         existing_fact_keys = {fact_key for fact_key in (_fact_content_key(fact.get("content")) for fact in current_memory.get("facts", [])) if fact_key is not None}
         new_facts = update_data.get("newFacts", [])
         for fact in new_facts:
@@ -783,9 +775,9 @@ class MemoryUpdater:
                 if fact_key is not None:
                     existing_fact_keys.add(fact_key)
 
-        # Enforce max facts limit
+        # 控制事实数量上限，避免长期记忆无限增长导致注入预算被撑爆。
         if len(current_memory["facts"]) > config.max_facts:
-            # Sort by confidence and keep top ones
+            # 超限时按置信度保留最重要的事实。
             current_memory["facts"] = sorted(
                 current_memory["facts"],
                 key=lambda f: f.get("confidence", 0),

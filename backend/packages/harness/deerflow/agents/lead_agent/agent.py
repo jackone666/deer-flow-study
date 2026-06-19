@@ -190,14 +190,20 @@ def _resolve_model_name(requested_model_name: str | None = None, *,
 
 def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> (
         DeerFlowSummarizationMiddleware | None):
-    """根据配置创建并配置摘要中间件。"""
+    """根据配置创建摘要中间件，并挂上记忆冲刷钩子。
+
+    摘要中间件是上下文工程的“历史压缩层”：当消息窗口超过阈值时，
+    它把较早消息压缩为 summary 消息，同时保留最近消息和近期加载的技能文件。
+    若记忆功能启用，还会在压缩前调用 ``memory_flush_hook``，防止即将被删除的
+    消息还没来得及写入长期记忆。
+    """
     resolved_app_config = app_config or get_app_config()
     config = resolved_app_config.summarization
 
     if not config.enabled:
         return None
 
-    # Prepare trigger parameter
+    # 将 YAML 配置里的触发阈值对象转换为 LangChain 摘要中间件期望的 tuple。
     trigger = None
     if config.trigger is not None:
         if isinstance(config.trigger, list):
@@ -205,24 +211,19 @@ def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> 
         else:
             trigger = config.trigger.to_tuple()
 
-    # Prepare keep parameter
+    # keep 决定压缩后保留多少近期上下文，通常用于保证最后几轮对话不被摘要替代。
     keep = config.keep.to_tuple()
 
-    # Prepare model parameter.
-    # Bind "middleware:summarize" tag so RunJournal identifies these LLM calls
-    # as middleware rather than lead_agent (SummarizationMiddleware is a
-    # LangChain built-in, so we tag the model at creation time).
-    # attach_tracing=False because the graph-level RunnableConfig (set in
-    # ``_make_lead_agent``) already carries tracing callbacks; binding them
-    # again at the model level would emit duplicate spans and break
-    # ``session_id`` / ``user_id`` propagation.
+    # 摘要使用独立模型调用；打上 middleware:summarize 标签后，RunJournal 能把
+    # 这部分 token 归因到中间件，而不是主 Agent。追踪回调已在图根注入，
+    # 此处必须 attach_tracing=False，避免重复 span 和 trace 属性传播失败。
     if config.model_name:
         model = create_chat_model(name=config.model_name, thinking_enabled=False, app_config=resolved_app_config, attach_tracing=False)
     else:
         model = create_chat_model(thinking_enabled=False, app_config=resolved_app_config, attach_tracing=False)
     model = model.with_config(tags=["middleware:summarize"])
 
-    # Prepare kwargs
+    # 只向父类传递已启用的可选参数，保持默认行为由 LangChain 中间件控制。
     kwargs = {
         "model": model,
         "trigger": trigger,
@@ -239,9 +240,8 @@ def _create_summarization_middleware(*, app_config: AppConfig | None = None) -> 
     if resolved_app_config.memory.enabled:
         hooks.append(memory_flush_hook)
 
-    # The logic below relies on two assumptions holding true: this factory is
-    # the sole entry point for DeerFlowSummarizationMiddleware, and the runtime
-    # config is not expected to change after startup.
+    # 技能路径和读取工具名用于“技能恢复”：摘要压缩时保留最近读过的技能文件内容。
+    # 这里假设 DeerFlowSummarizationMiddleware 只通过本工厂创建，运行期配置不会漂移。
     skills_container_path = resolved_app_config.skills.container_path or "/mnt/skills"
 
     return DeerFlowSummarizationMiddleware(
@@ -429,73 +429,68 @@ def _build_middlewares(
     resolved_app_config = app_config or get_app_config()
     middlewares = build_lead_runtime_middlewares(app_config=resolved_app_config, lazy_init=True)
 
-    # Always inject current date (and optionally memory) as <system-reminder> into the
-    # first HumanMessage to keep the system prompt fully static for prefix-cache reuse.
+    # 动态上下文不放进 system prompt，而是以隐藏 HumanMessage 注入：
+    # system prompt 因此能跨用户/会话保持静态，提升模型前缀缓存命中率。
     from deerflow.agents.middlewares.dynamic_context_middleware import DynamicContextMiddleware
 
     middlewares.append(DynamicContextMiddleware(agent_name=agent_name, app_config=resolved_app_config))
 
-    # Add summarization middleware if enabled
+    # 历史压缩层：在模型调用前控制消息窗口大小，并在压缩前冲刷长期记忆。
     summarization_middleware = _create_summarization_middleware(app_config=resolved_app_config)
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
-    # Add TodoList middleware if plan mode is enabled
+    # 计划模式下额外注入 todo 工具，属于上下文中的“显式工作记忆”。
     cfg = _get_runtime_config(config)
     is_plan_mode = cfg.get("is_plan_mode", False)
     todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
 
-    # Add TokenUsageMiddleware when token_usage tracking is enabled
+    # token 统计用于观察上下文膨胀、摘要和子 Agent 调用成本。
     if resolved_app_config.token_usage.enabled:
         middlewares.append(TokenUsageMiddleware())
 
-    # Add TitleMiddleware
+    # 标题生成在 after_agent 执行，不参与模型输入上下文。
     middlewares.append(TitleMiddleware(app_config=resolved_app_config))
 
-    # Add MemoryMiddleware (after TitleMiddleware)
+    # 长期记忆写入在标题之后执行，避免标题生成消息污染记忆抽取。
     middlewares.append(MemoryMiddleware(agent_name=agent_name, memory_config=resolved_app_config.memory))
 
-    # Add ViewImageMiddleware only if the current model supports vision.
-    # Use the resolved runtime model_name from make_lead_agent to avoid stale config values.
+    # 仅视觉模型需要图片内联上下文；模型名使用运行期解析结果，避免读取过期配置。
     model_config = resolved_app_config.get_model_config(model_name) if model_name else None
     if model_config is not None and model_config.supports_vision:
         middlewares.append(ViewImageMiddleware())
 
-    # Hide deferred tool schemas from model binding until tool_search promotes them.
-    # The deferred set + catalog hash come from the build-time setup (assembled
-    # after tool-policy filtering); promotion is read from graph state.
+    # 延迟工具 schema 默认不进入模型上下文，直到 tool_search 提升后才绑定，
+    # 这是控制 MCP 工具上下文体积的关键策略。
     if deferred_setup is not None and deferred_setup.deferred_names:
         from deerflow.agents.middlewares.deferred_tool_filter_middleware import DeferredToolFilterMiddleware
 
         middlewares.append(DeferredToolFilterMiddleware(deferred_setup.deferred_names, deferred_setup.catalog_hash))
 
-    # Add SubagentLimitMiddleware to truncate excess parallel task calls
+    # 子 Agent 并发限制用于约束一次模型响应产生的 task 调用数量。
     subagent_enabled = cfg.get("subagent_enabled", False)
     if subagent_enabled:
         max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
-    # LoopDetectionMiddleware — detect and break repetitive tool call loops
+    # 循环检测会在重复工具调用时注入提醒或强制停止，避免上下文被无效工具轮次撑爆。
     loop_detection_config = resolved_app_config.loop_detection
     if loop_detection_config.enabled:
         middlewares.append(LoopDetectionMiddleware.from_config(loop_detection_config))
 
-    # Inject custom middlewares before ClarificationMiddleware
+    # 自定义中间件插在澄清中间件之前，保留 Clarification 的最终拦截权。
     if custom_middlewares:
         middlewares.extend(custom_middlewares)
 
-    # SafetyFinishReasonMiddleware — suppress tool execution when the provider
-    # safety-terminated the response. Registered after custom middlewares so
-    # that LangChain's reverse-order after_model dispatch runs Safety first;
-    # cleared tool_calls then flow through Loop/Subagent accounting without
-    # firing extra alarms. See safety_finish_reason_middleware.py docstring.
+    # 安全终止时先剥离不完整 tool_calls；LangChain 的 after_model 逆序执行，
+    # 因此这里注册在靠后位置，让后续循环/子 Agent 统计看到已清理的消息。
     safety_config = resolved_app_config.safety_finish_reason
     if safety_config.enabled:
         middlewares.append(SafetyFinishReasonMiddleware.from_config(safety_config))
 
-    # ClarificationMiddleware should always be last
+    # 澄清工具必须最后注册，确保它能作为最终工具调用拦截点中断运行。
     middlewares.append(ClarificationMiddleware())
     return middlewares
 
@@ -653,8 +648,8 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     resolved_app_config = app_config         # 调用方注入的 AppConfig 快照
 
     # ── 模型相关 ──
-    thinking_enabled = cfg.get("thinking_enabled", True)          # 是否启用 extended thinking
-    reasoning_effort = cfg.get("reasoning_effort", None)          # reasoning effort 等级
+    thinking_enabled = cfg.get("thinking_enabled", True)          # 是否启用扩展思考
+    reasoning_effort = cfg.get("reasoning_effort", None)          # 推理强度等级
     requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")  # API 请求指定的模型
 
     # ── 模式开关 ──
@@ -722,7 +717,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
 
     # ⚠️ 追踪回调必须在图根注入（而非模型级）——
     # 这样整个 LangGraph run 产生单一 trace，所有 node/LLM/tool 作为子 span
-    # Langfuse handler 看到 on_chain_start(parent_run_id=None) 才会传播 session_id/user_id
+    # Langfuse 处理器只有在图根 on_chain_start(parent_run_id=None) 时才传播 session_id/user_id。
     tracing_callbacks = build_tracing_callbacks()
     if tracing_callbacks:
         existing = config.get("callbacks") or []
@@ -773,7 +768,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     final_tools, setup = _assemble_deferred(filtered, enabled=resolved_app_config.tool_search.enabled)
 
     # 步骤 8+9：构建中间件链 + 渲染系统提示 → create_agent
-    # reasoning_effort 仅在非 bootstrap 分支传入（bootstrap 不需要深度推理）
+    # 推理强度仅在非 bootstrap 分支传入（bootstrap 不需要深度推理）。
     return create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False),
         tools=final_tools,
