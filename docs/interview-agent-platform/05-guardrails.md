@@ -101,6 +101,262 @@ wrap_tool_call(request, handler)
 
 异步路径 `awrap_tool_call` 同理。
 
+## 简化版代码
+
+面试时不用背完整项目代码，可以用下面这个极简版本说明实现思路。
+
+### 1. 定义请求、原因和决策对象
+
+```python
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+
+@dataclass
+class GuardrailRequest:
+    tool_name: str
+    tool_args: dict[str, Any]
+    thread_id: str | None = None
+    user_id: str | None = None
+    agent_name: str | None = None
+    passport: str | None = None
+
+
+@dataclass
+class GuardrailReason:
+    code: str
+    message: str = ""
+
+
+@dataclass
+class GuardrailDecision:
+    allow: bool
+    reasons: list[GuardrailReason] = field(default_factory=list)
+```
+
+这一层只做数据建模：
+
+- `GuardrailRequest` 是“这次工具调用要不要放行”的输入。
+- `GuardrailDecision` 是 provider 返回的判断结果。
+- `GuardrailReason` 用于给模型和日志解释拒绝原因。
+
+### 2. 定义 Provider 接口
+
+```python
+class GuardrailProvider(Protocol):
+    def evaluate(self, request: GuardrailRequest) -> GuardrailDecision:
+        ...
+
+    async def aevaluate(self, request: GuardrailRequest) -> GuardrailDecision:
+        ...
+```
+
+Provider 只负责策略判断，不负责执行工具。
+
+这样可以替换不同策略来源：
+
+```text
+AllowlistProvider
+RemotePolicyProvider
+UserPermissionProvider
+RiskModelProvider
+```
+
+### 3. 一个最简单的 AllowlistProvider
+
+```python
+class AllowlistProvider:
+    def __init__(
+        self,
+        *,
+        allow: set[str] | None = None,
+        deny: set[str] | None = None,
+    ) -> None:
+        self.allow = allow
+        self.deny = deny or set()
+
+    def evaluate(self, request: GuardrailRequest) -> GuardrailDecision:
+        if self.allow is not None and request.tool_name not in self.allow:
+            return GuardrailDecision(
+                allow=False,
+                reasons=[
+                    GuardrailReason(
+                        code="tool_not_allowed",
+                        message=f"tool {request.tool_name!r} not in allowlist",
+                    )
+                ],
+            )
+
+        if request.tool_name in self.deny:
+            return GuardrailDecision(
+                allow=False,
+                reasons=[
+                    GuardrailReason(
+                        code="tool_denied",
+                        message=f"tool {request.tool_name!r} is denied",
+                    )
+                ],
+            )
+
+        return GuardrailDecision(
+            allow=True,
+            reasons=[GuardrailReason(code="allowed")],
+        )
+
+    async def aevaluate(self, request: GuardrailRequest) -> GuardrailDecision:
+        return self.evaluate(request)
+```
+
+这个 provider 的判断顺序是：
+
+```text
+如果配置了 allowlist，工具不在 allowlist -> 拒绝
+如果工具在 denylist -> 拒绝
+否则 -> 放行
+```
+
+### 4. 中间件核心逻辑
+
+下面是同步路径的极简版本：
+
+```python
+class GuardrailMiddleware:
+    def __init__(
+        self,
+        provider: GuardrailProvider,
+        *,
+        fail_closed: bool = True,
+        passport: str | None = None,
+    ) -> None:
+        self.provider = provider
+        self.fail_closed = fail_closed
+        self.passport = passport
+
+    def wrap_tool_call(self, request, handler):
+        guardrail_request = GuardrailRequest(
+            tool_name=request.tool_call["name"],
+            tool_args=request.tool_call.get("args", {}),
+            thread_id=request.runtime.context.get("thread_id"),
+            user_id=request.runtime.context.get("user_id"),
+            agent_name=request.runtime.context.get("agent_name"),
+            passport=self.passport,
+        )
+
+        try:
+            decision = self.provider.evaluate(guardrail_request)
+        except Exception:
+            if self.fail_closed:
+                decision = GuardrailDecision(
+                    allow=False,
+                    reasons=[
+                        GuardrailReason(
+                            code="provider_error",
+                            message="guardrail provider error (fail-closed)",
+                        )
+                    ],
+                )
+            else:
+                return handler(request)
+
+        if decision.allow:
+            return handler(request)
+
+        return self._denied_tool_message(request, decision)
+```
+
+这段代码的重点是：
+
+1. 从真实 tool call 里提取工具名和参数。
+2. 补充线程、用户、Agent 等运行时上下文。
+3. 调 provider 做策略判断。
+4. `allow=True` 才执行原始工具。
+5. provider 异常时按 `fail_closed` 决定拒绝还是放行。
+6. 拒绝时不抛异常，而是返回标准化 ToolMessage。
+
+### 5. 拒绝时返回标准化 ToolMessage
+
+```python
+from langchain_core.messages import ToolMessage
+
+
+def _format_reasons(decision: GuardrailDecision) -> str:
+    if not decision.reasons:
+        return "guardrail denied tool call"
+
+    return "; ".join(
+        f"{reason.code}: {reason.message}".strip(": ")
+        for reason in decision.reasons
+    )
+
+
+def _denied_tool_message(request, decision: GuardrailDecision) -> ToolMessage:
+    return ToolMessage(
+        content=f"Guardrail denied tool call. {_format_reasons(decision)}",
+        tool_call_id=request.tool_call["id"],
+        name=request.tool_call["name"],
+        status="error",
+    )
+```
+
+为什么不直接 `raise Exception`？
+
+因为模型已经发起了一次 tool call。如果直接抛异常，上层消息链可能断掉；返回 `ToolMessage(status="error")` 可以保持协议完整，让模型看到拒绝原因并选择下一步。
+
+### 6. 异步路径
+
+异步路径基本一致，只是调用 `aevaluate` 和 `await handler(request)`：
+
+```python
+async def awrap_tool_call(self, request, handler):
+    guardrail_request = GuardrailRequest(
+        tool_name=request.tool_call["name"],
+        tool_args=request.tool_call.get("args", {}),
+        thread_id=request.runtime.context.get("thread_id"),
+        user_id=request.runtime.context.get("user_id"),
+        agent_name=request.runtime.context.get("agent_name"),
+        passport=self.passport,
+    )
+
+    try:
+        decision = await self.provider.aevaluate(guardrail_request)
+    except Exception:
+        if self.fail_closed:
+            decision = GuardrailDecision(
+                allow=False,
+                reasons=[
+                    GuardrailReason(
+                        code="provider_error",
+                        message="guardrail provider error (fail-closed)",
+                    )
+                ],
+            )
+        else:
+            return await handler(request)
+
+    if decision.allow:
+        return await handler(request)
+
+    return self._denied_tool_message(request, decision)
+```
+
+### 7. 面试讲代码的顺序
+
+可以按这条线讲：
+
+```text
+模型发起工具调用
+  -> 中间件拿到 tool_name/tool_args
+  -> 构造 GuardrailRequest
+  -> Provider 返回 GuardrailDecision
+  -> allow 才调用 handler
+  -> deny 返回 ToolMessage(status="error")
+  -> provider 异常默认 fail-closed
+```
+
+一句话总结：
+
+> Guardrails 的实现本质是一个工具调用前的授权中间件：它不执行策略细节，也不执行工具本身，只负责把工具调用转成标准请求、调用 provider 判断、按 allow/deny 控制 handler 是否继续执行。
+
 ## 为什么是工具调用前
 
 因为很多工具有副作用，一旦执行再拦截就晚了。

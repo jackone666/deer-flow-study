@@ -306,3 +306,126 @@
 - 摘要加入结构化 slot。
 - 工具检索加入 rerank。
 - Guardrails 增加风险分级和策略审计。
+
+## 八、当前项目 Harness 案例追问
+
+### Q33：为什么这个项目要做 Harness，而不是普通 Agent 封装？
+
+回答要点：
+
+- 普通 Agent 封装只管模型和工具。
+- 当前项目还要管线程状态、上下文、摘要、记忆、工具权限、安全和沙箱。
+- Harness 把这些横切能力做成运行时底座。
+- 中间件链可以让不同能力独立演进。
+
+推荐回答：
+
+> 普通 Agent 封装通常只是模型加工具，但当前项目要解决长上下文、长期记忆、多工具治理、远程沙箱和 Guardrails 安全拦截。Harness 的价值是把这些能力统一成运行时：请求进来后有 thread_id、ThreadState、中间件链、工具过滤、sandbox、memory queue 和子 Agent 调度。
+
+### Q34：Harness 运行时具体负责什么？
+
+回答要点：
+
+- 管理 `thread_id`、runtime context、线程数据目录。
+- 注入长期偏好和动态上下文。
+- 编排 Lead Agent 和子 Agent。
+- 统一工具调用、中间件、安全拦截。
+- 维护 ThreadState reducer 合并语义。
+
+推荐回答：
+
+> Harness 是 Agent 的运行时底座，不是单个功能。它负责把 HTTP 请求变成一个有 thread_id 的 Agent 任务，注入上下文和长期偏好，执行主 AgentLoop，调度工具和子 Agent，采集工具事件并推送给前端，同时挂上 Guardrails、Sandbox、摘要、记忆这些中间件。
+
+### Q35：为什么要用 task 工具拆子 Agent？
+
+回答要点：
+
+- 子任务上下文隔离。
+- 避免大量工具输出污染主对话。
+- 子任务可独立读文件、搜索、执行命令。
+- 主 Agent 保留任务主线和最终决策。
+
+推荐回答：
+
+> task 工具的核心价值是上下文隔离。主 Agent 负责整体目标和决策，子 Agent 负责探索型或命令型子任务。比如读大量代码、跑测试、分析日志都可能产生很多中间消息，放在子 Agent 里能避免污染主上下文。
+
+### Q36：ThreadState 为什么不能简单用 dict 覆盖？
+
+回答要点：
+
+- 不同字段合并语义不同。
+- messages 要支持 RemoveMessage。
+- artifacts 要追加去重。
+- promoted 要按 catalog_hash 作用域合并。
+- viewed_images 是字典合并或清空。
+
+### Q37：为什么沙箱要收敛到远程 HTTP backend？
+
+回答要点：
+
+- Agent 进程不直接执行宿主机命令。
+- 安全边界更清晰。
+- 多任务和生产部署更一致。
+- 缺 `provisioner_url` 时显式失败，避免本地 fallback。
+
+### Q38：工具治理为什么属于 Harness 能力？
+
+回答要点：
+
+- 工具来源多：内置、配置、MCP、Skill、Subagent、ACP。
+- Harness 决定当前 Agent 能看到什么、调用什么。
+- group 和 allowed-tools 做权限过滤。
+- deferred tools 控制 schema token。
+- catalog_hash 防止工具目录漂移。
+
+### Q39：中间件链的顺序为什么重要？
+
+回答要点：
+
+- ThreadData 要在 Sandbox 前准备目录。
+- DynamicContext 和 Summarization 都在模型调用前，但 reminder 不能被摘要压错位置。
+- Guardrails 要在真实工具执行前。
+- Memory 要在 Agent 响应后异步入队。
+
+## 九、自进化追问
+
+### Q40：你说的自进化具体是什么？
+
+回答要点：
+
+- 不是让 Agent 随便改自己。
+- 分三层：长期记忆、Skill 工作流、评测训练。
+- 用户纠偏进入 memory。
+- 成功复杂流程沉淀成 Skill。
+- Harness 评测可作为 SFT / RL 的数据基础，但当前主要强调 Memory 和 Skill 沉淀。
+
+推荐回答：
+
+> 自进化不是无约束自修改，而是有门禁的经验沉淀。短期是把用户偏好和纠错写入长期记忆，把重复成功的工具流程沉淀成 Skill；长期是记录 Agent 轨迹，用动态 Rubric 评分，高分轨迹进入训练数据，低分轨迹进入错误分析。
+
+### Q41：Skill 自进化和长期记忆有什么区别？
+
+回答要点：
+
+- 长期记忆记录用户偏好和事实。
+- Skill 记录任务流程和操作方法。
+- “用户要求全程中文回复”是 memory。
+- “生成面试文档时外部资料只参考格式，内容必须回到当前项目”是 Skill。
+
+### Q42：Rubric 评测为什么要动态生成？
+
+回答要点：
+
+- 不同 query 的成功标准不同。
+- 问 Guardrails 要检查 fail-closed 和 ToolMessage error。
+- 问摘要压缩要检查动态提醒保护和 RemoveMessage 重建。
+- 动态 Rubric 比固定模板更准确。
+
+### Q43：怎么防止自进化以错训错？
+
+回答要点：
+
+- 来源门禁：只从明确纠偏、成功任务、高分轨迹提取。
+- 格式门禁：Memory/Skill 必须 schema 校验。
+- 评测门禁：更新后跑回归集。
+- P0 fail 样本不能进训练集。

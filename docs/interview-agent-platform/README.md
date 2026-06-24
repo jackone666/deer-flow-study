@@ -49,6 +49,8 @@
 - `05-guardrails.md`：Guardrails 安全拦截中间件。
 - `06-question-bank.md`：高频面试问题与回答要点。
 - `07-cheatsheet.md`：面试前速记卡。
+- `08-harness-runtime-case.md`：当前项目的 Agent Harness 运行时案例，把 ThreadState、中间件、子 Agent、远程沙箱、工具治理串起来。
+- `09-self-evolution-evaluation.md`：当前项目的自进化、Memory / Skill 沉淀、Harness 评测闭环。
 
 ## 面试表达原则
 

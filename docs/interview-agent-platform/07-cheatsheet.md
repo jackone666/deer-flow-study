@@ -116,3 +116,51 @@ Result：
 工具治理：group、allowed-tools、deferred tools、tool_search、promoted、catalog_hash。
 Guardrails：wrap_tool_call，GuardrailRequest，allow/deny，fail-closed，ToolMessage error。
 ```
+
+## 当前项目 Harness 案例速记
+
+一句话：
+
+> 当前项目是智能 Agent Harness 平台，用统一运行时管理 ThreadState、中间件链、动态上下文、长期记忆、摘要压缩、工具治理、子 Agent、远程沙箱和 Guardrails。
+
+核心链路：
+
+```text
+User Message
+  -> ThreadData
+  -> Remote Sandbox
+  -> Dynamic Context
+  -> Summarization
+  -> Lead Agent
+  -> Tool / Task Subagent
+  -> Guardrails / Audit
+  -> ThreadState Reducer
+  -> Memory / Skill Evolution
+```
+
+Harness 讲法：
+
+```text
+Runtime：thread_id / session_dir / active_tasks
+Context：长期偏好 + 当前日期 + system-reminder
+Tooling：group + allowed-tools + deferred tools + tool_search
+Orchestration：Lead Agent + task 子 Agent
+Safety：Guardrails + Sandbox + 文件安全
+Evolution：Memory + Skill + Rubric + SFT/RL
+```
+
+fork 三条件：
+
+```text
+能并行
+上下文要隔离
+调用链深度 >= 3
+```
+
+自进化三层：
+
+```text
+Memory：用户偏好和纠偏
+Skill：复用成功工作流
+Training：Rubric 高分轨迹 -> SFT / Agentic RL
+```
