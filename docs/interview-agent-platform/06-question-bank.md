@@ -429,3 +429,177 @@
 - 格式门禁：Memory/Skill 必须 schema 校验。
 - 评测门禁：更新后跑回归集。
 - P0 fail 样本不能进训练集。
+
+## 十、评估、观测与数据飞轮追问
+
+### Q44：你怎么证明这个 Agent Harness 项目有效？
+
+回答要点：
+
+- 不能只看“有没有回答”。
+- 分结果质量、过程质量、安全质量、成本效率。
+- 用 P0/P1/P2 评估。
+- 结合离线评测集和线上指标。
+
+推荐回答：
+
+> 我会从四类指标证明：结果上看任务成功率和用户纠偏率；过程上看工具调用是否合理、是否死循环、deferred tool 是否先提升；安全上看 Guardrail deny 和沙箱越权；成本上看 token、工具耗时、摘要压缩率和子 Agent 数量。
+
+### Q45：P0/P1/P2 怎么设计？
+
+回答要点：
+
+- P0 是底线，触发就失败。
+- P1 是关键过程，缺失重扣。
+- P2 是质量评分。
+
+例子：
+
+- P0：Guardrails provider 异常时 fail-open。
+- P1：deferred tool 没有先 tool_search。
+- P2：回答结构、trade-off、验证说明。
+
+### Q46：线上一次 Agent 运行慢了，你怎么排查？
+
+回答要点：
+
+- 先用 `thread_id/run_id` 找 trace。
+- 看慢在 model、tool、sandbox acquire、subagent 还是 memory。
+- 看 token 和工具输出大小。
+- 看是否触发摘要或重试。
+
+推荐回答：
+
+> 我会把一次 run 拆成 trace：dynamic context、summarization、model.call、tool.call、guardrail.evaluate、sandbox、subagent、memory.enqueue。看每个 span 的 duration 和状态，就能定位慢在模型、工具、沙箱还是子 Agent。
+
+### Q47：可观测性要记录哪些指标？
+
+回答要点：
+
+- 模型：token、latency、finish_reason。
+- 上下文：摘要触发、压缩率、reminder 保护。
+- 记忆：入队、合并、纠偏、失败。
+- 工具：调用次数、错误率、耗时。
+- 安全：guardrail deny、provider error、sandbox fail。
+
+### Q48：数据飞轮怎么设计？
+
+回答要点：
+
+- Raw events 不直接进入长期系统。
+- 清洗成 signals。
+- 高质量数据进 eval/training。
+- 通过门禁后进入 Memory / Skill / tool docs / guardrails。
+
+推荐回答：
+
+> 数据飞轮是：任务轨迹产生事件和指标，用户纠偏、工具错误、Guardrail 拒绝、评测分数被清洗成信号；可信信号进入 Memory 或 Skill，工具错误反哺工具描述和 Guardrails，最后用回归评测验证更新是否有效。
+
+### Q49：怎么避免数据飞轮污染？
+
+回答要点：
+
+- 临时文件路径不入库。
+- prompt injection 不入库。
+- P0 fail 轨迹不入训练。
+- 模型推断低置信。
+- 更新后跑回归，必要时回滚。
+
+### Q50：如果只能选一个最关键的观测字段，你选什么？
+
+回答要点：
+
+- `thread_id` / `run_id`。
+- 没有它无法把模型、工具、沙箱、记忆、Guardrail 串成一条链。
+
+## 十一、沙箱系统追问
+
+### Q51：为什么 Agent 平台需要沙箱？
+
+回答要点：
+
+- Agent 会动态调用 bash、读写文件、生成产物。
+- 这些操作有副作用，不能直接落到宿主机。
+- 沙箱提供执行隔离、目录边界、多租户隔离和资源回收。
+
+推荐回答：
+
+> 沙箱解决的是“工具在哪里执行”的问题。模型可以决定调用 bash 或写文件，但真正执行应该进入受控环境，避免直接触碰宿主机文件、环境变量和进程。
+
+### Q52：沙箱在 Harness 里怎么接入？
+
+回答要点：
+
+- `ThreadDataMiddleware` 准备线程目录。
+- `SandboxMiddleware` 接入生命周期。
+- 工具调用时 `ensure_sandbox_initialized()` 懒加载。
+- `AioSandboxProvider` 获取或复用 sandbox。
+- `RemoteSandboxBackend` 调 HTTP provisioner。
+
+推荐回答：
+
+> Harness 不把沙箱写死在 Lead Agent 里，而是通过 middleware 和 provider 抽象接入。模型调用工具时，工具内部先拿 sandbox，再执行真实命令或文件操作。
+
+### Q53：为什么要远程 HTTP Backend？
+
+回答要点：
+
+- Agent 进程不直接执行宿主机命令。
+- 执行面从 Agent 服务中剥离。
+- provisioner 统一做创建、发现、销毁和资源调度。
+- 更适合生产多租户隔离和扩缩容。
+
+推荐回答：
+
+> 远程 backend 让 Agent 进程只做 client，真正执行交给 provisioner 管理的 sandbox。这样安全边界更清楚，也能把资源隔离、回收、观测交给基础设施层。
+
+### Q54：为什么缺 provisioner_url 要 fail-fast？
+
+回答要点：
+
+- 缺配置说明远程执行环境不可用。
+- 不能静默 fallback 到本地执行。
+- 否则不同环境安全边界不一致。
+
+推荐回答：
+
+> 沙箱配置错误属于安全边界错误，应该启动失败。静默 fallback 会让生产和开发环境行为不一致，严重时模型生成的命令会落到不该执行的地方。
+
+### Q55：Sandbox、Guardrails、工具权限怎么区分？
+
+回答要点：
+
+- 工具权限：模型有没有入口。
+- Guardrails：这一次调用允不允许。
+- Sandbox：允许后在哪里执行。
+- SandboxAudit：bash 内容是否危险。
+
+推荐回答：
+
+> 工具权限管可见性，Guardrails 管调用策略，Sandbox 管执行隔离，SandboxAudit 管 bash 命令审计。四层叠加，不能互相替代。
+
+### Q56：为什么沙箱要按 thread_id 复用？
+
+回答要点：
+
+- 同一任务多轮需要保留 workspace。
+- 文件、依赖、产物可以连续使用。
+- 确定性 sandbox_id 支持跨进程 discover。
+- 避免同线程重复创建执行环境。
+
+推荐回答：
+
+> Agent 任务往往不是一轮结束。按 thread_id 复用 sandbox，可以保留任务工作区，同时通过确定性 sandbox_id 在进程重启后找回已有执行环境。
+
+### Q57：怎么做沙箱可观测性？
+
+回答要点：
+
+- 记录 acquire/create/discover/execute 的 trace span。
+- 记录创建耗时、复用次数、失败次数、命令耗时。
+- 记录 SandboxAudit block/warn/pass。
+- 用 `thread_id/run_id/sandbox_id` 串联。
+
+推荐回答：
+
+> 我会把 sandbox.ensure_initialized、provider.acquire、backend.discover/create、sandbox.execute_command 都做成 trace span，并记录 sandbox_id、thread_id、耗时、错误类型和审计结果。

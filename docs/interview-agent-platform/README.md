@@ -51,6 +51,8 @@
 - `07-cheatsheet.md`：面试前速记卡。
 - `08-harness-runtime-case.md`：当前项目的 Agent Harness 运行时案例，把 ThreadState、中间件、子 Agent、远程沙箱、工具治理串起来。
 - `09-self-evolution-evaluation.md`：当前项目的自进化、Memory / Skill 沉淀、Harness 评测闭环。
+- `10-evaluation-observability-data-flywheel.md`：项目评估、可观测性与数据飞轮，回答“怎么证明有效、怎么定位问题、怎么持续变好”。
+- `11-sandbox-system.md`：沙箱系统专题，讲远程 HTTP backend、懒加载、线程级复用、命令审计、安全边界和面试追问。
 
 ## 面试表达原则
 

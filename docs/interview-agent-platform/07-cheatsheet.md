@@ -164,3 +164,79 @@ Memory：用户偏好和纠偏
 Skill：复用成功工作流
 Training：Rubric 高分轨迹 -> SFT / Agentic RL
 ```
+
+## 评估、观测、数据飞轮速记
+
+一句话：
+
+> 评估回答“好不好”，观测回答“坏在哪”，数据飞轮回答“怎么越用越好”。
+
+P0/P1/P2：
+
+```text
+P0：安全和正确性底线，触发即失败
+P1：关键过程项，缺失严重扣分
+P2：体验、结构、成本和解释质量
+```
+
+观测三件套：
+
+```text
+Logs：发生了什么
+Metrics：趋势和比例如何
+Traces：一次 run 每一步怎么走
+```
+
+关键指标：
+
+```text
+token、latency、tool_error_rate、guardrail_deny_rate
+summary_compression_ratio、memory_update_fail_count
+tool_search_precision@5、sandbox_acquire_latency
+```
+
+数据飞轮：
+
+```text
+任务轨迹
+  -> 评测/纠偏/错误
+  -> 数据清洗和门禁
+  -> Memory / Skill / Tool / Guardrails
+  -> 回归评测
+  -> 新版本
+```
+
+## 沙箱系统速记
+
+一句话：
+
+> 沙箱管“工具在哪里执行”，不是管“模型能不能调用工具”。
+
+链路：
+
+```text
+SandboxMiddleware
+  -> ensure_sandbox_initialized()
+  -> AioSandboxProvider
+  -> RemoteSandboxBackend
+  -> HTTP provisioner
+  -> remote sandbox
+```
+
+四层分工：
+
+```text
+工具权限：有没有入口
+Guardrails：这次允不允许
+Sandbox：在哪里执行
+SandboxAudit：bash 内容是否危险
+```
+
+关键设计：
+
+```text
+provisioner_url 必填，缺失 fail-fast
+默认懒加载，首次工具调用才创建
+thread_id 派生 deterministic sandbox_id
+同线程复用，空闲回收，启动接管遗留 sandbox
+```
