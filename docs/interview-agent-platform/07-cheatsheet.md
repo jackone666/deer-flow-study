@@ -240,3 +240,40 @@ provisioner_url 必填，缺失 fail-fast
 thread_id 派生 deterministic sandbox_id
 同线程复用，空闲回收，启动接管遗留 sandbox
 ```
+
+## 从零学习速记
+
+先抓总图：
+
+```text
+Harness = Agent 应用服务器
+Context = 模型调用前看到什么
+Memory = 哪些信息跨会话保留
+Summary = 长上下文怎么压缩
+Tools = 模型能调用什么
+Guardrails = 这次调用允不允许
+Sandbox = 允许后在哪里执行
+Evolution = 经验怎么沉淀
+Eval/Obs = 怎么证明有效、怎么定位问题
+```
+
+面试展开顺序：
+
+```text
+问题背景
+  -> 为什么简单 Agent 不够
+  -> 当前项目怎么分层
+  -> 核心链路
+  -> 关键 trade-off
+  -> 怎么评估和观测
+```
+
+万能回答骨架：
+
+```text
+我不是只做了一个 prompt，而是做了运行时机制。
+这个机制解决的是 [问题]。
+链路是 [before/after/wrap/state/tool]。
+为了安全/稳定，我加了 [门禁/去重/回滚/评测]。
+最后用 [指标/trace/eval] 证明有效。
+```

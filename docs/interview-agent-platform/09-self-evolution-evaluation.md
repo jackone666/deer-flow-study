@@ -24,6 +24,198 @@ Prompt 改了一点 -> 不知道整体效果变好还是变差
   -> 后续任务复用
 ```
 
+## 学习版：自进化不是模型自己改自己
+
+自进化可以理解成 Agent 的“经验沉淀机制”。
+
+人类工程师完成任务后会做：
+
+```text
+复盘问题
+记录踩坑
+更新文档
+抽象脚本
+补测试
+加入 checklist
+```
+
+Agent 自进化对应：
+
+```text
+用户纠偏 -> Memory correction
+重复流程 -> Skill
+失败案例 -> Eval case
+高分轨迹 -> Training data
+安全问题 -> Guardrail rule
+工具失败 -> Tool schema / description
+```
+
+一句话：
+
+> 自进化不是让模型无约束修改自己，而是 Harness 把可复用经验从一次任务里提炼出来，经过门禁后进入长期系统。
+
+## 成熟系统怎么做
+
+成熟 Agent 平台不会让线上数据直接改线上能力，而是走受控闭环：
+
+```text
+capture
+  -> triage
+  -> label
+  -> propose change
+  -> review / validate
+  -> eval regression
+  -> rollout
+  -> monitor
+```
+
+对应当前项目：
+
+| 阶段 | 当前项目对象 |
+| --- | --- |
+| capture | trace、messages、tool errors、user corrections |
+| triage | MemoryMiddleware、Skill evolution 判断 |
+| label | correction、reinforcement、failure type |
+| propose | memory patch、skill patch、tool doc patch |
+| validate | JSON schema、rubric、eval suite |
+| rollout | 写入 memory/skill/tool config |
+| monitor | 用户纠偏率、case pass rate |
+
+面试回答：
+
+> 我会把自进化做成受控闭环，而不是让模型直接改线上规则。所有更新都要有来源、门禁、评测和回滚。
+
+## 自进化对象
+
+| 对象 | 适合沉淀什么 | 不适合沉淀什么 |
+| --- | --- | --- |
+| Memory | 用户偏好、项目背景、明确纠偏 | 临时文件、低置信猜测 |
+| Skill | 可复用流程、稳定步骤 | 一次性任务、未验证做法 |
+| Eval Case | 失败样本、边界条件、安全规则 | 没有期望行为的模糊样本 |
+| Tool Docs | 工具别名、参数说明、错误提示 | 与工具无关的用户事实 |
+| Guardrails | 高风险规则、拒绝原因 | 主观风格偏好 |
+| Training Data | 高质量轨迹、标注结果 | P0 失败、脏数据 |
+
+## 简化版代码
+
+```python
+def after_agent_evolution(state, runtime):
+    trace = runtime.context["trace"]
+    signals = collect_signals(
+        messages=state["messages"],
+        tool_calls=trace.tool_calls,
+        errors=trace.errors,
+    )
+
+    candidates = []
+    if signals.user_correction:
+        candidates.append(propose_memory_correction(signals))
+    if signals.reusable_workflow:
+        candidates.append(propose_skill_patch(signals))
+    if signals.failure_reproducible:
+        candidates.append(propose_eval_case(signals))
+
+    for candidate in candidates:
+        if passes_gate(candidate):
+            enqueue_review_or_apply(candidate)
+```
+
+门禁：
+
+```python
+def passes_gate(candidate):
+    return (
+        candidate.source_is_trusted
+        and candidate.schema_valid
+        and candidate.has_expected_behavior
+        and not candidate.contains_sensitive_data
+        and not candidate.from_prompt_injection
+    )
+```
+
+## Skill 自进化怎么设计
+
+一个 Skill 至少包含：
+
+```text
+name
+description
+when_to_use
+inputs
+steps
+tools_needed
+failure_modes
+verification
+examples
+version
+```
+
+候选 Skill 判断：
+
+- 是否重复出现。
+- 是否需要多步工具调用。
+- 是否有稳定成功路径。
+- 是否能抽象成通用流程。
+- 是否有验证方法。
+
+不应该沉淀为 Skill：
+
+- 一次性命令。
+- 用户临时偏好。
+- 未验证 workaround。
+- 包含隐私或临时文件路径的流程。
+
+## 评估和观测
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `correction_repeat_rate` | 同类纠错是否减少 |
+| `skill_reuse_success_rate` | Skill 复用成功率 |
+| `time_to_complete_delta` | 使用 Skill 后耗时是否下降 |
+| `tool_call_count_delta` | 使用 Skill 后工具调用是否减少 |
+| `eval_case_fix_rate` | 新增失败 case 是否被修复 |
+| `regression_rate_after_evolution` | 自进化后是否引入回归 |
+
+事件：
+
+```text
+evolution.signal.detected
+evolution.memory.proposed
+evolution.skill.proposed
+evolution.eval_case.created
+evolution.gate.rejected
+evolution.change.applied
+evolution.rollback
+```
+
+风险：
+
+| 风险 | 表现 | 解决 |
+| --- | --- | --- |
+| 以错训错 | 错误轨迹被沉淀 | P0 fail 不进训练/Skill |
+| 记忆污染 | 低置信推断写入 | 置信度和用户明确性门禁 |
+| Skill 膨胀 | 太多低质量 Skill | 复用率和成功率淘汰 |
+| 过拟合用户 | 单个用户偏好影响全局 | 用户级/全局级隔离 |
+| 隐私泄漏 | 临时文件或敏感信息固化 | 脱敏和禁止入库规则 |
+
+## 回滚机制
+
+任何自进化对象都要可回滚：
+
+```text
+memory fact -> fact_id + created_at + source_run_id
+skill -> versioned file + changelog
+tool doc -> catalog hash + version
+guardrail rule -> policy version
+eval case -> active flag
+```
+
+面试回答：
+
+> 自进化必须可追踪和可回滚。每条记忆、每个 Skill patch、每条规则都要知道来源 run，出了问题能撤掉。
+
 ## 自进化分三层
 
 | 层级 | 目标 | 当前项目例子 |

@@ -56,6 +56,171 @@ before_model()
      -> RemoveMessage(REMOVE_ALL_MESSAGES) + summary + preserved_messages
 ```
 
+## 学习版：摘要压缩是什么
+
+摘要压缩是 Agent 的“上下文垃圾回收”。
+
+长对话里会累积：
+
+```text
+用户消息
+AI 回答
+工具调用
+工具输出
+子 Agent 结果
+动态提醒
+历史摘要
+```
+
+如果不压缩：
+
+- 容易超出模型上下文窗口。
+- token 成本越来越高。
+- 旧工具输出干扰当前目标。
+- 模型注意力被无关历史稀释。
+
+但摘要不能随便压。它要保留：
+
+- 用户目标和约束。
+- 已做决策。
+- 文件、路径、产物。
+- 错误和修复方式。
+- 当前待办。
+- 不能被压错位置的动态提醒。
+
+## 成熟系统怎么处理长上下文
+
+常见三种策略：
+
+| 策略 | 作用 | 风险 |
+| --- | --- | --- |
+| Sliding Window | 保留最近 N 条消息 | 早期关键决策丢失 |
+| Summary Memory | 历史压成摘要 | 摘要可能失真 |
+| Retrieval Memory | 外部召回相关片段 | 召回可能漏掉 |
+
+当前项目更像：
+
+```text
+Sliding Window + Summary Memory + Protected Messages
+```
+
+也就是：
+
+```text
+早期历史 -> summary
+近期消息 -> 原样保留
+动态提醒 -> 特殊保护
+工具调用关系 -> 避免拆坏
+```
+
+## 摘要中间件六个模块
+
+| 模块 | 职责 |
+| --- | --- |
+| TokenCounter | 估算当前 messages token |
+| ShouldSummarize | 判断是否超过阈值 |
+| CutoffPolicy | 决定压缩到哪里 |
+| PartitionPolicy | 拆成待摘要和保留消息 |
+| SummaryGenerator | 调模型生成摘要 |
+| MessageRebuilder | `RemoveMessage + summary + preserved` |
+
+简化代码：
+
+```python
+def before_model(state, runtime):
+    messages = state["messages"]
+    total_tokens = token_counter(messages)
+    if not should_summarize(messages, total_tokens):
+        return None
+
+    cutoff = determine_cutoff_index(messages)
+    to_summarize, preserved = partition_messages(messages, cutoff)
+    to_summarize, preserved = preserve_dynamic_reminders(to_summarize, preserved)
+
+    summary = create_summary(to_summarize)
+    return {
+        "messages": [
+            RemoveMessage(id=REMOVE_ALL_MESSAGES),
+            *build_new_messages(summary),
+            *preserved,
+        ]
+    }
+```
+
+面试重点：
+
+> 它不是直接删除旧消息，而是先全量移除，再用 summary 和 preserved messages 重建线程消息，确保状态里只有压缩后的干净上下文。
+
+## TokenCounter 怎么实现
+
+常见三档：
+
+| 实现 | 说明 |
+| --- | --- |
+| 模型 tokenizer | 最准确 |
+| provider usage | 事后统计准确 |
+| 字符估算 | 快，适合触发判断 |
+
+推荐：
+
+```text
+优先模型 tokenizer
+  -> 没有则用通用 tokenizer
+  -> 再没有则字符估算
+  -> 预留安全 buffer
+```
+
+面试回答：
+
+> TokenCounter 的作用是触发压缩，不一定百分百精确。工程上可以优先用模型 tokenizer，没有就用字符估算，并保留 buffer，避免刚好卡在上下文窗口边缘。
+
+## 摘要质量 rubric
+
+| 维度 | 好摘要应该保留 |
+| --- | --- |
+| Goal | 用户目标 |
+| Constraints | 限制条件和偏好 |
+| Decisions | 已做决定 |
+| Artifacts | 文件、路径、产物 |
+| Errors | 错误和修复方式 |
+| Todos | 未完成事项 |
+| Runtime | 不把当前动态提醒当历史事实 |
+
+## 评估和观测
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `summary_trigger_rate` | 摘要触发比例 |
+| `compression_ratio` | 压缩比例 |
+| `post_summary_success_rate` | 摘要后任务成功率 |
+| `context_loss_rate` | 摘要后丢关键上下文比例 |
+| `reminder_preserve_rate` | 动态提醒保护成功率 |
+| `summary_hallucination_rate` | 摘要产生不存在事实比例 |
+
+事件：
+
+```text
+summary.check
+summary.skipped
+summary.started
+summary.created
+summary.failed
+summary.reminder_preserved
+summary.rebuild_messages
+```
+
+排障：
+
+```text
+摘要后回答跑偏
+  -> 看 summary 是否缺目标/约束
+  -> 看 preserved_messages 是否太少
+  -> 看 cutoff 是否切断 tool pair
+  -> 看 dynamic reminder 是否被压错位置
+```
+
 ## 触发条件
 
 摘要不应该每轮都做，而是基于阈值触发。

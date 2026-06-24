@@ -61,6 +61,173 @@ Agent 工具数量少时，可以直接把所有工具 schema 绑定到模型。
   -> DeferredToolFilterMiddleware 允许被提升工具 schema 出现
 ```
 
+## 学习版：工具治理是什么
+
+工具治理解决的是 Agent 平台的“能力入口管理”。
+
+工具少时：
+
+```text
+直接把所有 tools 绑定给模型
+```
+
+工具多时：
+
+```text
+几百上千个 MCP/内置/自定义工具
+  -> tool schema 撑爆上下文
+  -> 模型选错工具
+  -> 权限边界不清
+  -> 安全风险增加
+```
+
+工具治理要回答：
+
+- 当前 Agent 能看到哪些工具？
+- 当前 Skill 允许哪些工具？
+- 哪些工具要延迟加载？
+- 模型如何发现工具？
+- 被提升的工具怎么记录？
+- 工具目录变化后旧状态是否失效？
+- 工具调用前还要经过哪些安全层？
+
+## 成熟系统怎么做
+
+成熟 Agent 平台一般拆成五层：
+
+| 层 | 作用 | 当前项目对应 |
+| --- | --- | --- |
+| Tool Registry | 工具注册、schema、描述、版本 | `tools.py` |
+| Policy | group、allowed-tools、denylist | `tool_policy.py` |
+| Retrieval | 大规模工具检索召回 | `tool_search` |
+| Promotion | 命中工具提升进上下文 | `ThreadState.promoted` |
+| Runtime Guard | 调用前校验和安全拦截 | `DeferredToolFilter` / `Guardrails` |
+
+面试回答：
+
+> 工具治理不是简单工具列表，而是一套从注册、权限、检索、提升到调用时校验的闭环。否则工具越多，模型越容易选错，安全边界也越模糊。
+
+## 工具生命周期
+
+```text
+register
+  -> describe
+  -> group
+  -> permission filter
+  -> defer or bind
+  -> search
+  -> promote
+  -> call
+  -> observe
+  -> improve description
+```
+
+工具元数据建议：
+
+```json
+{
+  "name": "read_file",
+  "group": "sandbox",
+  "description": "Read a file from sandbox workspace.",
+  "risk_level": "medium",
+  "requires_sandbox": true,
+  "side_effect": false,
+  "version": "v1"
+}
+```
+
+## 简化版代码
+
+```python
+def get_available_tools(agent_config, skill):
+    tools = load_builtin_tools() + load_configured_tools() + load_mcp_tools()
+    tools = filter_by_group(tools, agent_config.groups)
+    tools = filter_by_allowed_tools(tools, skill.allowed_tools)
+
+    base_tools, deferred = split_deferred_tools(tools)
+    catalog = build_tool_catalog(deferred)
+    if deferred:
+        base_tools.append(make_tool_search(catalog))
+    return base_tools, catalog
+```
+
+运行时校验：
+
+```python
+def wrap_tool_call(request, handler):
+    tool_name = request.tool_call["name"]
+    if is_deferred_tool(tool_name):
+        promoted = request.state.get("promoted", {})
+        if tool_name not in promoted.tools:
+            return ToolMessage(
+                content="Tool is deferred. Please call tool_search first.",
+                status="error",
+                tool_call_id=request.tool_call["id"],
+            )
+    return handler(request)
+```
+
+## 工具描述怎么写
+
+好的工具描述应该包含：
+
+```text
+工具做什么
+什么时候用
+什么时候不要用
+关键参数
+同义词/别名
+风险等级
+典型任务
+```
+
+例子：
+
+```text
+read_file:
+Read text files from the sandbox workspace. Use when you need to inspect source code,
+configuration, markdown, logs, or generated artifacts. Do not use for binary files.
+Aliases: open file, inspect file, view source, read markdown.
+```
+
+## 评估和观测
+
+离线指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `Precision@5` | Top5 里有多少是相关工具 |
+| `Recall@5` | 相关工具有多少被 Top5 召回 |
+| `MRR` | 第一个正确工具排第几 |
+| `tool_selection_accuracy` | 模型最终是否选对工具 |
+| `unpromoted_call_block_rate` | 未提升工具拦截率 |
+| `tool_schema_token_saved` | 延迟加载节省 token |
+
+事件：
+
+```text
+tools.registry.loaded
+tools.filtered.by_group
+tools.filtered.by_allowed
+tools.catalog.created
+tool_search.called
+tool_search.results
+tool.promoted
+tool.deferred.blocked
+tool.call.failed
+```
+
+排障：
+
+```text
+模型说找不到工具
+  -> 看工具是否注册
+  -> 看 group/allowed-tools 是否过滤
+  -> 看 tool_search 是否召回
+  -> 看 promoted 是否写入
+  -> 看 catalog_hash 是否变化
+```
+
 ## 工具分组
 
 工具分组解决“场景权限”和“上下文聚焦”。

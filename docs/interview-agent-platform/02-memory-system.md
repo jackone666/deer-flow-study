@@ -49,6 +49,176 @@ Agent 完成一轮响应后
 - `backend/packages/harness/deerflow/agents/memory/updater.py`
 - `backend/packages/harness/deerflow/agents/memory/prompt.py`
 
+## 学习版：长期记忆不是聊天记录
+
+长期记忆不是把所有对话存起来。
+
+```text
+聊天记录：发生过什么
+长期记忆：未来交互仍然有用的事实、偏好、约束和纠偏
+```
+
+例子：
+
+| 对话内容 | 是否该记 | 原因 |
+| --- | --- | --- |
+| “以后都用中文回复我” | 是 | 强偏好，长期有效 |
+| “这个项目不是基于开源项目，是我自己做的” | 是 | 明确纠偏 |
+| “帮我看这个临时上传文件” | 否 | 文件是会话临时资源 |
+| “刚才命令失败了” | 视情况 | 只有形成稳定修复经验才记 |
+| “今天下午有点忙” | 通常否 | 短期状态，对未来价值低 |
+
+一句话：
+
+> 记忆系统要解决的是“什么信息值得跨会话保留”，不是“怎么保存所有历史消息”。
+
+## 成熟系统怎么分记忆
+
+| 记忆类型 | 内容 | 当前项目对应 |
+| --- | --- | --- |
+| Profile Memory | 语言、长期偏好、用户身份 | `personalContext` |
+| Project Memory | 当前项目、技术栈、约束 | `workContext` |
+| Episodic Memory | 近期任务和决策 | `recentMonths` / `topOfMind` |
+| Correction Memory | 用户纠偏、Agent 错误修正 | `facts.category=correction` |
+| Skill Memory | 可复用工作流 | Skill 自进化 |
+
+面试回答：
+
+> 我把记忆拆成摘要字段和原子事实。摘要字段适合描述用户状态和历史脉络，原子事实适合做置信度、冲突删除和动态上下文注入。
+
+## 当前项目落地流程
+
+完整链路可以拆成八步：
+
+```text
+1. after_agent 捕获完整对话
+2. 检测 correction / reinforcement 信号
+3. 按 thread_id/user_id/agent_name 入队
+4. 去抖合并同一目标
+5. 后台 worker 拉取当前 memory
+6. LLM 输出结构化 memory patch
+7. schema 校验、冲突事实删除
+8. 写回 memory store
+```
+
+简化代码：
+
+```python
+def after_agent(state, runtime):
+    messages = state["messages"]
+    memory_queue.enqueue(
+        thread_id=runtime.context["thread_id"],
+        user_id=runtime.context.get("user_id"),
+        agent_name=runtime.context.get("agent_name"),
+        messages=messages,
+        correction_detected=detect_user_correction(messages),
+        reinforcement_detected=detect_reinforcement(messages),
+    )
+```
+
+后台 worker：
+
+```python
+def process_memory_job(job):
+    current = memory_store.load(job.user_id, job.agent_name)
+    patch = memory_llm.invoke({
+        "current_memory": current,
+        "conversation": render_conversation(job.messages),
+        "correction_hint": job.correction_detected,
+    })
+    memory_store.apply(validate_memory_patch(patch))
+```
+
+## 纠错字段怎么更新
+
+用户纠错时一般更新两类：
+
+| 更新位置 | 作用 |
+| --- | --- |
+| `newFacts[].category = "correction"` | 记录明确纠偏事实 |
+| `factsToRemove` | 删除或替换冲突旧事实 |
+
+如果纠错影响当前项目背景，也可能更新：
+
+```text
+user.workContext.summary
+user.topOfMind.summary
+history.recentMonths.summary
+```
+
+例子：
+
+```json
+{
+  "newFacts": [
+    {
+      "content": "User's DeerFlow Agent Harness project should be described as self-built, not as based on another open-source project.",
+      "category": "correction",
+      "confidence": 0.98
+    }
+  ],
+  "factsToRemove": ["fact_claiming_based_on_open_source"]
+}
+```
+
+面试回答：
+
+> 纠错不能只追加新事实，还要删除冲突旧事实。否则长期记忆里新旧说法并存，后续动态上下文仍可能把旧错误带回来。
+
+## 冲突处理优先级
+
+```text
+用户明确纠偏
+  > 用户明确陈述
+  > 多轮稳定行为
+  > 模型推断
+```
+
+常见冲突：
+
+| 冲突 | 处理 |
+| --- | --- |
+| 显式反转 | 删除旧事实，新增当前事实 |
+| 用户纠错 | correction 高优先级 |
+| 时间过期 | 从 topOfMind 移除 |
+| 低置信推断冲突 | 保留用户明确说法 |
+
+## 评估和观测
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `memory_precision` | 写入记忆有多少真的有用 |
+| `memory_recall` | 该记的信息有多少被记住 |
+| `correction_capture_rate` | 用户纠偏捕获率 |
+| `conflict_removal_rate` | 冲突旧事实删除率 |
+| `false_memory_rate` | 错误/臆测记忆比例 |
+| `memory_update_latency` | 从对话到可用的延迟 |
+
+事件：
+
+```text
+memory.enqueue.created
+memory.enqueue.merged
+memory.patch.generated
+memory.patch.validated
+memory.update.completed
+memory.conflict.removed
+memory.update.failed
+```
+
+排障：
+
+```text
+用户说“你没记住”
+  -> 看 after_agent 是否入队
+  -> 看去抖合并是否覆盖
+  -> 看 worker 是否成功
+  -> 看 patch 是否 shouldUpdate=false
+  -> 看 dynamic context 是否选中了这条记忆
+```
+
 ## 为什么要异步入队
 
 记忆更新通常需要额外 LLM 调用，如果同步执行，会拉长用户请求耗时。

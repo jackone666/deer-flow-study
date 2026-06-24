@@ -29,6 +29,197 @@
 
 > Harness 的定位是 Agent 运行时底座。它不是单个功能，而是把模型、工具、状态、上下文、安全、记忆、子 Agent 这些能力统一接到一条可插拔执行链上。
 
+## 学习版：Harness 可以类比什么
+
+Harness 可以理解为 Agent 的“应用服务器”。
+
+普通 Web 服务有：
+
+```text
+router
+middleware
+request context
+session
+auth
+logging
+background job
+```
+
+Agent Harness 对应：
+
+```text
+agent routing
+middleware chain
+runtime context
+thread state
+tool auth
+trace / logging
+state reducer
+memory queue
+```
+
+所以 Harness 不是“套一层 Agent 封装”，而是把复杂 Agent 运行时需要的横切能力统一治理。
+
+## 成熟 Agent 平台怎么分层
+
+| 层 | 传统后端类比 | Agent Harness 职责 |
+| --- | --- | --- |
+| API Layer | Controller / Router | 接收用户请求，创建 run |
+| Runtime | Request Context | thread_id、user_id、run_id、store |
+| State | Session / DB transaction | messages、artifacts、sandbox、promoted |
+| Middleware | Web Middleware | context、summary、安全、memory |
+| Tool Runtime | Service Client | 工具调用、沙箱、外部 API |
+| Orchestration | Job Scheduler | 子 Agent、任务拆分、并发 |
+| Observability | APM | trace、metrics、logs、eval |
+
+面试回答：
+
+> Harness 的价值是把 Agent 从一个 prompt demo 变成可维护的应用运行时。模型只是其中一环，真正难的是状态、工具、安全、上下文、子任务和记忆怎么稳定协作。
+
+## 当前项目的设计原则
+
+### 1. 横切能力中间件化
+
+```text
+Dynamic Context
+Summarization
+Guardrails
+Sandbox
+Memory
+Deferred Tool Filter
+```
+
+都不写进 Lead Agent 主逻辑，而是通过 middleware 接入。
+
+### 2. 状态合并 reducer 化
+
+```text
+messages       -> append/remove/rebuild
+artifacts      -> append + dedupe
+promoted       -> hash-aware merge
+viewed_images  -> dict merge or clear
+```
+
+### 3. 工具能力延迟暴露
+
+```text
+基础工具 + tool_search 先给模型
+大规模工具进入 deferred catalog
+召回后 promoted
+调用时再校验
+```
+
+### 4. 执行能力隔离
+
+```text
+bash / file tools
+  -> remote sandbox
+  -> guardrails
+  -> audit
+```
+
+### 5. 经验沉淀异步化
+
+```text
+用户响应先返回
+Memory / Skill 后台更新
+```
+
+## 运行时对象关系
+
+```text
+Run
+  ├─ Runtime.context
+  │   ├─ thread_id
+  │   ├─ user_id
+  │   ├─ run_id
+  │   └─ agent_name
+  ├─ ThreadState
+  │   ├─ messages
+  │   ├─ artifacts
+  │   ├─ promoted
+  │   ├─ sandbox
+  │   └─ thread_data
+  ├─ Middleware chain
+  ├─ Model
+  ├─ Tools
+  └─ Store / Memory
+```
+
+## 简化版代码
+
+```python
+def run_agent(user_input, thread_id, user_id):
+    runtime = Runtime(
+        context={
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "run_id": new_run_id(),
+        },
+        store=store,
+    )
+
+    state = load_thread_state(thread_id)
+    state["messages"].append(HumanMessage(user_input))
+
+    result = graph.invoke(
+        state,
+        runtime=runtime,
+        middleware=[
+            ThreadDataMiddleware(),
+            SandboxMiddleware(lazy_init=True),
+            DynamicContextMiddleware(),
+            SummarizationMiddleware(),
+            DeferredToolFilterMiddleware(),
+            GuardrailMiddleware(),
+            SandboxAuditMiddleware(),
+            MemoryMiddleware(),
+        ],
+    )
+    save_thread_state(thread_id, result)
+    return result["messages"][-1]
+```
+
+## Harness 评估和观测
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `run_success_rate` | Agent run 成功率 |
+| `middleware_error_rate` | 中间件错误率 |
+| `state_merge_error_rate` | 状态合并异常 |
+| `tool_call_success_rate` | 工具调用成功率 |
+| `subagent_success_rate` | 子 Agent 成功率 |
+| `memory_enqueue_latency` | 记忆入队延迟 |
+| `sandbox_acquire_latency` | 沙箱获取耗时 |
+| `token_per_success` | 成功任务成本 |
+
+Trace：
+
+```text
+agent.run
+  -> middleware.thread_data
+  -> middleware.sandbox
+  -> middleware.dynamic_context
+  -> middleware.summarization
+  -> model.call
+  -> tool.call
+  -> state.reducer
+  -> memory.enqueue
+```
+
+排障：
+
+```text
+回答错了
+  -> 看模型输入是否缺上下文
+  -> 看摘要是否丢信息
+  -> 看工具是否选错
+  -> 看 Guardrails/Sandbox 是否拒绝
+  -> 看 state reducer 是否丢状态
+```
+
 ## 运行时整体链路
 
 一次用户请求进入后，可以这样讲：

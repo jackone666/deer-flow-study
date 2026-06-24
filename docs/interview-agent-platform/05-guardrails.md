@@ -45,6 +45,122 @@ Agent 工具调用有真实副作用：
 - `backend/packages/harness/deerflow/guardrails/builtin.py`
 - `backend/packages/harness/deerflow/config/guardrails_config.py`
 
+## 学习版：Guardrails 是什么
+
+Guardrails 是 Agent 的“运行时安全网关”。
+
+Prompt 安全提示是：
+
+```text
+告诉模型不要做危险事
+```
+
+Guardrails 是：
+
+```text
+模型已经决定调用工具
+  -> 工具还没执行
+  -> 中间件拦截请求
+  -> 策略判断 allow / deny
+  -> deny 时返回标准 ToolMessage
+```
+
+一句话：
+
+> Prompt 是建议，Guardrails 是执行前强制门禁。
+
+## 成熟系统怎么做安全分层
+
+| 层 | 解决什么 |
+| --- | --- |
+| Prompt Policy | 告诉模型规则 |
+| Tool Permission | 哪些工具可见 |
+| Guardrails | 本次调用是否允许 |
+| Sandbox | 允许后在哪里执行 |
+| Audit Log | 事后审计和追责 |
+| Human Approval | 高风险操作人工确认 |
+
+当前项目的 Guardrails 位于：
+
+```text
+模型输出 tool_call
+  -> DeferredToolFilter
+  -> GuardrailMiddleware
+  -> SandboxAuditMiddleware
+  -> tool handler
+```
+
+面试回答：
+
+> 我不会把安全完全交给 prompt。模型可能被 prompt injection 诱导，也可能误判工具风险，所以工具执行前必须有确定性中间件做 allow/deny。
+
+## 策略类型和风险分级
+
+| 策略类型 | 例子 | 特点 |
+| --- | --- | --- |
+| Allowlist | 只允许某些工具 | 简单稳妥 |
+| Denylist | 禁止危险工具/参数 | 易落地但可能漏 |
+| Rule-based | 路径、命令、域名、参数规则 | 可解释 |
+| Policy Service | 外部安全服务判断 | 集中治理 |
+| Human Approval | 高风险人工确认 | 安全但慢 |
+| Risk Scoring | 按风险分层处理 | 灵活 |
+
+| 风险 | 工具/行为 | 策略 |
+| --- | --- | --- |
+| Low | 读只读文档、列目录 | 默认放行 |
+| Medium | 写 workspace 文件、安装依赖 | 审计记录 |
+| High | bash、网络请求、删除文件 | Guardrails + SandboxAudit |
+| Critical | 访问密钥、越权路径、生产操作 | 拒绝或人工审批 |
+
+推荐演进路线：
+
+```text
+allowlist + rule provider + fail-closed
+  -> policy service + risk scoring
+  -> approval workflow
+```
+
+## 误杀、漏放和评估
+
+| 错误 | 含义 | 风险 |
+| --- | --- | --- |
+| False Positive | 安全操作被拒绝 | 影响体验 |
+| False Negative | 危险操作被放行 | 安全事故 |
+
+高风险工具上宁可多一点 false positive，也不能 false negative。
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `dangerous_call_block_rate` | 危险调用拦截率 |
+| `false_positive_rate` | 正常调用误杀率 |
+| `false_negative_rate` | 危险调用漏放率 |
+| `provider_error_rate` | provider 异常比例 |
+| `fail_closed_count` | fail-closed 触发次数 |
+| `deny_reason_distribution` | 拒绝原因分布 |
+
+事件：
+
+```text
+guardrail.evaluate.started
+guardrail.allowed
+guardrail.denied
+guardrail.provider.error
+guardrail.fail_closed
+guardrail.policy.timeout
+```
+
+排障：
+
+```text
+用户说工具不能用
+  -> 看 allowed-tools 是否过滤
+  -> 看 deferred tool 是否未提升
+  -> 看 Guardrails deny reason
+  -> 看 SandboxAudit 是否 block
+```
+
 ## 核心对象
 
 ### GuardrailRequest

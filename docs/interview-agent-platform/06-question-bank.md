@@ -603,3 +603,128 @@
 推荐回答：
 
 > 我会把 sandbox.ensure_initialized、provider.acquire、backend.discover/create、sandbox.execute_command 都做成 trace span，并记录 sandbox_id、thread_id、耗时、错误类型和审计结果。
+
+## 十二、学习版综合追问
+
+### Q58：如果面试官问“你这个项目不是普通 Agent 吗”，怎么答？
+
+回答要点：
+
+- 普通 Agent 是 prompt + tools。
+- 当前项目是 Harness 运行时。
+- 重点在状态、中间件、工具治理、安全、记忆、评估闭环。
+
+推荐回答：
+
+> 普通 Agent 更像一个 prompt demo，而我这个项目重点是运行时底座。它把模型调用、ThreadState、Middleware、工具治理、Guardrails、Sandbox、Memory、Skill 自进化和评估观测串成一条可维护链路。
+
+### Q59：怎么从 0 到 1 设计一个 Agent Harness？
+
+回答要点：
+
+- 先定义 Runtime Context 和 ThreadState。
+- 再抽 Middleware 生命周期。
+- 再接工具治理和安全。
+- 最后做记忆、摘要、评估和观测。
+
+推荐回答：
+
+> 我会先做 Runtime 和 State，因为所有能力都要有 thread_id、run_id 和可合并状态。然后把动态上下文、摘要、安全、记忆做成 middleware，再把工具治理、Sandbox 和 Guardrails 接到工具调用链，最后用 eval 和 trace 保证它可控。
+
+### Q60：动态上下文和长期记忆是什么关系？
+
+回答要点：
+
+- Memory 是存储。
+- Dynamic Context 是本轮选择和注入。
+- 不是所有记忆都每轮注入。
+
+推荐回答：
+
+> 长期记忆是候选知识库，动态上下文是运行时选择器。每轮 before_model 会按相关性、置信度和优先级选择少量记忆注入模型，避免完整记忆污染上下文。
+
+### Q61：摘要压缩和长期记忆有什么区别？
+
+回答要点：
+
+- 摘要压缩服务当前线程上下文。
+- 长期记忆服务跨会话个性化。
+- 摘要可以包含任务过程，记忆只保留未来有用事实。
+
+推荐回答：
+
+> 摘要是为了让当前长对话不断下去，长期记忆是为了让未来对话更个性化。摘要可以记录当前任务过程和工具结果，但不应该把临时文件路径这类会话资源写进长期记忆。
+
+### Q62：工具治理为什么不能只靠模型自己选？
+
+回答要点：
+
+- 工具多会撑爆上下文。
+- 模型可能选错或被诱导。
+- 权限和安全不能靠自觉。
+
+推荐回答：
+
+> 工具治理要把注册、权限、检索、提升和调用时校验都做起来。模型只负责表达意图，平台负责决定它当前能看到什么、能不能调用、调用前是否还要经过 Guardrails。
+
+### Q63：Guardrails 和 Sandbox 谁负责安全？
+
+回答要点：
+
+- Guardrails 是执行前策略判断。
+- Sandbox 是执行环境隔离。
+- SandboxAudit 是 bash 内容审计。
+
+推荐回答：
+
+> 三者是分层关系。Guardrails 决定这次工具调用允不允许，Sandbox 决定允许后在哪里执行，SandboxAudit 判断 bash 命令内容是否危险，不能互相替代。
+
+### Q64：自进化怎么避免以错训错？
+
+回答要点：
+
+- 原始轨迹不直接入 Memory/Skill。
+- 要经过 triage、schema、评测门禁。
+- P0 fail 不进训练或 Skill。
+- 所有更新可回滚。
+
+推荐回答：
+
+> 自进化必须是受控闭环。用户明确纠偏和高质量成功轨迹才有资格进入 Memory 或 Skill；失败轨迹先变成 eval case，修复通过后才能沉淀，不能直接把错误固化。
+
+### Q65：你怎么证明某次优化真的变好了？
+
+回答要点：
+
+- 有 baseline。
+- 同一 evalset 前后对比。
+- 看 P0/P1/P2、成本、延迟。
+- 上线后 online monitoring。
+
+推荐回答：
+
+> 我会先在固定 offline evalset 上和 baseline 比较，P0 必须为 0，P1 不能回归，再看 P2 质量分和 token/latency 成本。上线后还要用 online trace 和用户纠偏率验证真实流量没有变差。
+
+### Q66：如果只能选一个最核心设计，你选哪个？
+
+回答要点：
+
+- ThreadState + Middleware。
+- 它们是其它能力的承载层。
+
+推荐回答：
+
+> 我会选 ThreadState + Middleware。因为动态上下文、摘要、工具治理、安全、沙箱和记忆都依赖统一状态和生命周期钩子；没有这个底座，其它能力容易散在 Lead Agent 里，难维护也难观测。
+
+### Q67：你项目里最像大厂 Agent 平台的地方是什么？
+
+回答要点：
+
+- Harness 化运行时。
+- 工具治理和延迟加载。
+- 安全分层。
+- Eval/Observability/Data Flywheel。
+
+推荐回答：
+
+> 最像的是把 Agent 当生产系统而不是 demo 来做：有运行时状态、有中间件、有工具权限和 deferred tools、有 Guardrails 和 Sandbox，有长期记忆和 Skill 沉淀，也有评估、trace、数据飞轮去证明效果。

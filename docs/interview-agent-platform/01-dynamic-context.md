@@ -106,6 +106,127 @@ before_model(state, runtime)
 3. **跨天更新日期提醒**：日期变化会影响“今天/昨天/明天”等相对时间。
 4. **摘要消息不算真实用户消息**：摘要只是历史压缩结果，不代表用户新输入。
 
+## 学习版：动态上下文到底是什么
+
+可以把动态上下文理解成 Agent 的“运行时环境变量”。
+
+传统后端函数执行时会读取：
+
+```text
+env / config / session / request headers / feature flags / current time
+```
+
+Agent 调模型时也一样，不能只看用户最新一句话，还要知道：
+
+- 当前日期、时区。
+- 当前用户、线程、run。
+- 用户长期偏好和明确纠偏。
+- 当前 workspace、sandbox、tool promoted 状态。
+- 本轮系统提醒和安全边界。
+
+所以动态上下文不是“多塞 prompt”，而是把当前运行时有效状态转成模型可见上下文。
+
+## 成熟系统怎么分上下文
+
+| 上下文类型 | 例子 | 放哪里 |
+| --- | --- | --- |
+| 静态身份 | Agent 名称、职责、基础规则 | System Prompt |
+| 运行时状态 | 日期、thread_id、sandbox_id | Dynamic Context |
+| 长期记忆 | 语言偏好、项目背景、纠偏事实 | 选择后注入 |
+| 当前任务状态 | todo、当前文件、已提升工具 | Runtime State |
+| 安全提醒 | 临时限制、系统提醒 | 靠近模型调用注入 |
+
+面试回答：
+
+> System Prompt 适合稳定规则，动态上下文适合每轮可能变化的状态。比如当前日期、长期记忆、系统提醒和工具状态，这些都应该在 before_model 阶段按规则注入。
+
+## 当前项目落地模型
+
+推荐把动态上下文拆成四步：
+
+```text
+collect -> select -> render -> inject
+```
+
+含义：
+
+- `collect`：收集日期、长期记忆、thread_data、sandbox、promoted tools。
+- `select`：只选择本轮相关、高置信、未重复的信息。
+- `render`：渲染成 `<system-reminder>`。
+- `inject`：以隐藏 HumanMessage 放到正确位置。
+
+简化代码：
+
+```python
+def before_model(state, runtime):
+    if already_injected_for_current_turn(state["messages"]):
+        return None
+
+    context = collect_dynamic_context(runtime)
+    selected = select_relevant_context(context, state["messages"])
+    if not selected:
+        return None
+
+    reminder = HumanMessage(
+        content=render_system_reminder(selected),
+        additional_kwargs={"hidden": True, "dynamic_context": True},
+    )
+    return {"messages": [reminder]}
+```
+
+这段代码面试重点：
+
+- `before_model` 保证模型调用前看到最新上下文。
+- `hidden=True` 降低对用户真实对话语义的干扰。
+- `already_injected_for_current_turn` 防止重复注入。
+
+## 注入内容优先级
+
+| 优先级 | 内容 | 原因 |
+| --- | --- | --- |
+| P0 | 安全提醒、当前系统约束 | 错了可能越权 |
+| P1 | 用户明确偏好和纠偏事实 | 影响正确性和个性化 |
+| P1 | 当前日期、时区 | 影响相对时间 |
+| P2 | 项目背景、技术栈 | 提升贴合度 |
+| P3 | 弱推断兴趣 | 有帮助但不能强影响 |
+
+## 常见错误
+
+| 错误做法 | 问题 |
+| --- | --- |
+| 每轮注入完整长期记忆 | token 浪费，容易引入无关偏见 |
+| 把动态提醒写进摘要 | 当前状态被误当成历史事实 |
+| 用 summary 判断已注入 | summary 不是本轮真实用户消息 |
+| 让用户可见隐藏提醒 | 干扰用户体验 |
+| 不做去重 | 多条重复 reminder 让模型过度关注 |
+
+## 评估和观测
+
+指标：
+
+| 指标 | 含义 |
+| --- | --- |
+| `context_injection_rate` | 应注入时实际注入比例 |
+| `duplicate_injection_rate` | 重复注入比例 |
+| `memory_relevance_score` | 注入记忆与当前任务相关性 |
+| `preference_follow_rate` | 用户偏好遵守率 |
+| `correction_repeat_rate` | 用户纠偏后重复犯错率 |
+| `token_overhead` | 动态上下文 token 开销 |
+
+事件：
+
+```text
+dynamic_context.injected
+dynamic_context.skipped
+dynamic_context.duplicate_prevented
+dynamic_context.memory_selected
+dynamic_context.reminder_preserved
+```
+
+排障口诀：
+
+> 用户说“你怎么又忘了”，先看动态上下文是否注入，再看记忆是否被选中，最后看摘要是否把当前提醒压错位置。
+
 ## 为什么摘要消息不代表已经注入过
 
 摘要消息说明历史被压缩过，不说明当前模型调用已经有动态提醒。
