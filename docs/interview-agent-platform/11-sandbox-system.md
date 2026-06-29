@@ -7,6 +7,14 @@
 > “远程 Sandbox Backend 和本地执行有什么区别？”
 > “Sandbox、Guardrails、工具权限三者怎么分工？”
 
+## 相关源码跳转
+
+- [SandboxMiddleware：把沙箱生命周期接入 Agent 中间件](../../backend/packages/harness/deerflow/sandbox/middleware.py#L33)
+- [ensure_sandbox_initialized：首次工具调用时懒加载 sandbox](../../backend/packages/harness/deerflow/sandbox/tools.py#L1313)
+- [AioSandboxProvider：远程沙箱获取、复用、热池和回收](../../backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py#L109)
+- [RemoteSandboxBackend：HTTP provisioner create/discover/destroy](../../backend/packages/harness/deerflow/community/aio_sandbox/remote_backend.py#L33)
+- [SandboxAuditMiddleware：bash 命令审计](../../backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py#L222)
+
 ## 一句话总述
 
 > 我把沙箱设计成 Agent Harness 的工具执行隔离层：模型仍然通过工具接口表达意图，但 bash、文件读写、产物生成等有副作用操作不会直接落到宿主机，而是通过 `SandboxProvider -> AioSandboxProvider -> RemoteSandboxBackend -> HTTP provisioner` 进入线程级远程沙箱执行。

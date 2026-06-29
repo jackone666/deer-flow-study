@@ -4,6 +4,14 @@
 
 > 设计工具治理体系，支持工具分组、延迟工具加载、工具 hash 校验、TF-IDF 检索召回、工具权限控制和大规模工具集下的上下文压缩。
 
+## 相关源码跳转
+
+- [tool_search：延迟工具目录、检索与 promoted 状态写回](../../backend/packages/harness/deerflow/tools/builtins/tool_search.py#L1)
+- [DeferredToolFilterMiddleware：未提升工具调用拦截](../../backend/packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware.py#L24)
+- [ThreadState promoted reducer：catalog_hash 作用域合并](../../backend/packages/harness/deerflow/agents/thread_state.py#L72)
+- [Skill tool policy：按 Skill allowed-tools 过滤工具](../../backend/packages/harness/deerflow/skills/tool_policy.py#L17)
+- [Lead Agent：装配工具、中间件与 deferred setup](../../backend/packages/harness/deerflow/agents/lead_agent/agent.py#L451)
+
 ## 面试官想听什么
 
 工具治理是 Agent 平台的核心工程问题。面试官会关心：

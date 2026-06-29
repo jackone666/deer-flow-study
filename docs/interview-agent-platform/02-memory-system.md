@@ -4,6 +4,13 @@
 
 > 设计长期记忆管理系统，支持对话后异步入队、去抖合并、用户纠偏识别、强化信号检测、事实抽取、记忆摘要更新和冲突事实删除。
 
+## 相关源码跳转
+
+- [MemoryUpdater：抽取、纠偏、强化信号与持久化更新](../../backend/packages/harness/deerflow/agents/memory/updater.py#L457)
+- [MemoryStorage：per-user / per-agent 文件存储与原子写入](../../backend/packages/harness/deerflow/agents/memory/storage.py#L1)
+- [Memory summarization hook：摘要前触发记忆相关处理](../../backend/packages/harness/deerflow/agents/memory/summarization_hook.py#L1)
+- [DynamicContextMiddleware：运行时读取并注入长期记忆](../../backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py#L89)
+
 ## 面试官想听什么
 
 长期记忆不是“把聊天记录存起来”。面试官会关心：

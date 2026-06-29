@@ -98,7 +98,7 @@ class GuardrailMiddleware(AgentMiddleware[AgentState]):
         try:
             decision = self.provider.evaluate(gr)
         except GraphBubbleUp:
-            # Preserve LangGraph control-flow signals (interrupt/pause/resume).
+            # 保留 LangGraph 的控制流信号（interrupt/pause/resume），不能包装成普通拒绝。
             raise
         except Exception:
             logger.exception("Guardrail provider error (sync)")
@@ -131,7 +131,7 @@ class GuardrailMiddleware(AgentMiddleware[AgentState]):
         try:
             decision = await self.provider.aevaluate(gr)
         except GraphBubbleUp:
-            # Preserve LangGraph control-flow signals (interrupt/pause/resume).
+            # 保留 LangGraph 的控制流信号（interrupt/pause/resume），不能包装成普通拒绝。
             raise
         except Exception:
             logger.exception("Guardrail provider error (async)")

@@ -4,6 +4,13 @@
 
 > 实现动态上下文注入机制，在模型调用前按规则注入长期记忆、当前日期、系统提醒等上下文信息，并通过隐藏消息机制降低对用户真实对话语义的干扰。
 
+## 相关源码跳转
+
+- [DynamicContextMiddleware：模型调用前注入隐藏 system-reminder](../../backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py#L61)
+- [Lead Agent prompt：读取长期记忆上下文](../../backend/packages/harness/deerflow/agents/lead_agent/prompt.py#L1)
+- [MemoryStorage：按 user/agent 维度隔离记忆文件](../../backend/packages/harness/deerflow/agents/memory/storage.py#L100)
+- [SummarizationMiddleware：摘要时保护动态提醒](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L194)
+
 ## 面试官想听什么
 
 面试官不会只想听“我把记忆拼到 prompt 里”。他真正会考：

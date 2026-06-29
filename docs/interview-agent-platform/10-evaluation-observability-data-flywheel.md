@@ -8,6 +8,14 @@
 
 前面几篇讲的是“能力怎么实现”，这一篇讲的是“能力怎么被衡量、被观测、被持续改进”。
 
+## 相关源码跳转
+
+- [RunJournal：Run 事件、trace、token 用量落库桥接](../../backend/packages/harness/deerflow/runtime/journal.py#L39)
+- [TokenUsageMiddleware：模型用量采集与归因](../../backend/packages/harness/deerflow/agents/middlewares/token_usage_middleware.py#L275)
+- [tracing metadata：Langfuse session/user/trace 元数据构造](../../backend/packages/harness/deerflow/tracing/metadata.py#L28)
+- [Run event model：message / trace / lifecycle 事件结构](../../backend/packages/harness/deerflow/persistence/models/run_event.py#L1)
+- [Run model：Run 级 token 与状态字段](../../backend/packages/harness/deerflow/persistence/run/model.py#L1)
+
 ## 一句话总述
 
 > 我把 Agent Harness 的质量体系拆成三层：评估体系负责判断结果和过程是否好；可观测性体系负责在运行时定位模型、工具、上下文、沙箱、记忆的问题；数据飞轮负责把高质量轨迹、用户纠偏、工具失败和评测结果沉淀回 Memory、Skill、工具治理和模型训练数据中。

@@ -2,6 +2,14 @@
 
 这一篇补充当前项目里的“自进化”讲法。这里的自进化不是让 Agent 无约束修改自己，而是让 Harness 在任务结束后，把**用户纠偏、工具调用经验、失败修复路径、可复用工作流**沉淀到 Memory 和 Skill 中，并通过评测闭环验证是否真的变好。
 
+## 相关源码跳转
+
+- [MemoryUpdater：用户纠偏和强化信号写入长期记忆](../../backend/packages/harness/deerflow/agents/memory/updater.py#L457)
+- [Skill manage tool：Skill 创建、更新和回滚入口](../../backend/packages/harness/deerflow/tools/skill_manage_tool.py#L1)
+- [SkillStorage：Skill 文件存储、历史版本和加载](../../backend/packages/harness/deerflow/skills/storage/skill_storage.py#L18)
+- [Skill security scanner：自进化写入前的安全扫描](../../backend/packages/harness/deerflow/skills/security_scanner.py#L1)
+- [SkillEvolutionConfig：自进化配置项](../../backend/packages/harness/deerflow/config/skill_evolution_config.py#L16)
+
 ## 自进化要解决什么
 
 没有自进化时，Agent 平台会遇到这些问题：

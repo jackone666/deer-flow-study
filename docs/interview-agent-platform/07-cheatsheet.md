@@ -4,6 +4,16 @@
 
 我做的是一套智能 Agent 平台，核心解决长上下文、多工具、多 Agent 和安全执行问题：模型调用前做动态上下文注入，对话后异步更新长期记忆，历史超阈值后摘要压缩，大规模工具通过分组、权限和延迟加载治理，工具执行前由 Guardrails 做确定性安全拦截。
 
+## 核心源码速查
+
+- [ThreadState reducer](../../backend/packages/harness/deerflow/agents/thread_state.py#L100)
+- [DynamicContextMiddleware](../../backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py#L61)
+- [DeerFlowSummarizationMiddleware](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L100)
+- [tool_search / deferred tools](../../backend/packages/harness/deerflow/tools/builtins/tool_search.py#L139)
+- [GuardrailMiddleware](../../backend/packages/harness/deerflow/guardrails/middleware.py#L20)
+- [Sandbox lazy init](../../backend/packages/harness/deerflow/sandbox/tools.py#L1313)
+- [Run worker](../../backend/packages/harness/deerflow/runtime/runs/worker.py#L143)
+
 ## 端到端主线
 
 ```text

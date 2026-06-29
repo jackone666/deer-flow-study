@@ -4,6 +4,14 @@
 
 > 实现 Guardrails 安全拦截中间件，在工具调用前执行 allow/deny 决策，支持 fail-closed 策略、拒绝原因返回和工具错误消息标准化。
 
+## 相关源码跳转
+
+- [GuardrailMiddleware：工具执行前 allow/deny 拦截](../../backend/packages/harness/deerflow/guardrails/middleware.py#L20)
+- [GuardrailProvider：Request / Decision / Reason 数据结构](../../backend/packages/harness/deerflow/guardrails/provider.py#L9)
+- [内置 Guardrail provider：本地策略实现](../../backend/packages/harness/deerflow/guardrails/builtin.py#L1)
+- [GuardrailsConfig：provider 与 fail-closed 配置](../../backend/packages/harness/deerflow/config/guardrails_config.py#L1)
+- [SandboxAuditMiddleware：bash 内容审计层](../../backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py#L222)
+
 ## 面试官想听什么
 
 Guardrails 是 Agent 安全能力，面试官会重点看：

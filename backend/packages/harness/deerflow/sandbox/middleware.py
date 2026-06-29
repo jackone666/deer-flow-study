@@ -96,11 +96,11 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
         Returns:
             当需要写入沙箱分配结果时返回对应字典;否则返回 None。
         """
-        # Skip acquisition if lazy_init is enabled
+        # 懒加载模式下不在 Agent 启动时创建 sandbox，等首次文件/bash 工具调用再申请。
         if self._lazy_init:
             return super().before_agent(state, runtime)
 
-        # Eager initialization (original behavior)
+        # eager 模式保持旧行为：Agent 启动前立即申请 sandbox。
         if "sandbox" not in state or state["sandbox"] is None:
             thread_id = (runtime.context or {}).get("thread_id")
             if thread_id is None:
@@ -121,12 +121,12 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
         Returns:
             需要写入沙箱分配结果时返回对应字典,否则返回 None。
         """
-        # Skip acquisition if lazy_init is enabled
+        # 懒加载模式下不在 Agent 启动时创建 sandbox，等首次文件/bash 工具调用再申请。
         if self._lazy_init:
             return await super().abefore_agent(state, runtime)
 
-        # Eager initialization (original behavior), but use the async provider
-        # hook so blocking sandbox startup/polling runs outside the event loop.
+        # eager 模式保持旧行为；异步路径必须使用 provider 的 async hook，
+        # 避免容器启动/健康检查阻塞 event loop。
         if "sandbox" not in state or state["sandbox"] is None:
             thread_id = (runtime.context or {}).get("thread_id")
             if thread_id is None:
@@ -160,7 +160,7 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
             get_sandbox_provider().release(sandbox_id)
             return None
 
-        # No sandbox to release
+        # 当前轮没有实际申请 sandbox，交给父类继续处理。
         return super().after_agent(state, runtime)
 
     @override
@@ -179,5 +179,5 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
             await self._release_sandbox_async(sandbox_id)
             return None
 
-        # No sandbox to release
+        # 当前轮没有实际申请 sandbox，交给父类继续处理。
         return await super().aafter_agent(state, runtime)

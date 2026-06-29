@@ -16,6 +16,19 @@
 4. **安全边界意识**：是否知道 Agent 调工具和执行命令前必须有 guardrails 和 sandbox。
 5. **系统设计表达能力**：是否能把模块边界、数据流、失败策略讲清楚。
 
+## GitHub 源码索引
+
+- [动态上下文注入](../../backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py#L61)
+- [长期记忆更新](../../backend/packages/harness/deerflow/agents/memory/updater.py#L457)
+- [摘要压缩中间件](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L100)
+- [工具检索与延迟加载](../../backend/packages/harness/deerflow/tools/builtins/tool_search.py#L139)
+- [工具提升状态 reducer](../../backend/packages/harness/deerflow/agents/thread_state.py#L72)
+- [Guardrails 安全拦截](../../backend/packages/harness/deerflow/guardrails/middleware.py#L20)
+- [RunManager / 运行时状态](../../backend/packages/harness/deerflow/runtime/runs/manager.py#L176)
+- [run_agent worker](../../backend/packages/harness/deerflow/runtime/runs/worker.py#L143)
+- [沙箱懒加载](../../backend/packages/harness/deerflow/sandbox/tools.py#L1313)
+- [远程沙箱 Provider](../../backend/packages/harness/deerflow/community/aio_sandbox/aio_sandbox_provider.py#L109)
+
 ## 怎么用这套资料
 
 这套资料不是按“背诵顺序”写的，而是按“面试追问深度”写的：

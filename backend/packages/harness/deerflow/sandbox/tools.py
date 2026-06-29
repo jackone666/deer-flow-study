@@ -1332,7 +1332,7 @@ def ensure_sandbox_initialized(runtime: Runtime | None = None) -> Sandbox:
     if runtime.state is None:
         raise SandboxRuntimeError("Tool runtime state not available")
 
-    # Check if sandbox already exists in state
+    # 先复用 state 中已有的 sandbox，避免同一线程内重复创建执行环境。
     sandbox_state = runtime.state.get("sandbox")
     if sandbox_state is not None:
         sandbox_id = sandbox_state.get("sandbox_id")
@@ -1340,11 +1340,11 @@ def ensure_sandbox_initialized(runtime: Runtime | None = None) -> Sandbox:
             sandbox = get_sandbox_provider().get(sandbox_id)
             if sandbox is not None:
                 if runtime.context is not None:
-                    runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
+                    runtime.context["sandbox_id"] = sandbox_id  # 写入 context，便于 after_agent/release 与日志关联。
                 return sandbox
-            # Sandbox was released, fall through to acquire new one
+            # 旧 sandbox 已被释放，继续走懒加载申请新实例。
 
-    # Lazy acquisition: get thread_id and acquire sandbox
+    # 懒加载申请：只有首次真实工具调用时才根据 thread_id 获取 sandbox。
     thread_id = runtime.context.get("thread_id") if runtime.context else None
     if thread_id is None:
         thread_id = runtime.config.get("configurable", {}).get("thread_id") if runtime.config else None
@@ -1354,16 +1354,16 @@ def ensure_sandbox_initialized(runtime: Runtime | None = None) -> Sandbox:
     provider = get_sandbox_provider()
     sandbox_id = provider.acquire(thread_id)
 
-    # Update runtime state - this persists across tool calls
+    # 写回 runtime state，使后续工具调用能复用同一个 sandbox_id。
     runtime.state["sandbox"] = {"sandbox_id": sandbox_id}
 
-    # Retrieve and return the sandbox
+    # 取回 sandbox 实例并返回给具体工具执行。
     sandbox = provider.get(sandbox_id)
     if sandbox is None:
         raise SandboxNotFoundError("Sandbox not found after acquisition", sandbox_id=sandbox_id)
 
     if runtime.context is not None:
-        runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for releasing in after_agent
+        runtime.context["sandbox_id"] = sandbox_id  # 写入 context，便于 after_agent/release 与日志关联。
     return sandbox
 
 

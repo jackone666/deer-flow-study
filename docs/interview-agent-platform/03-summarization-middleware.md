@@ -4,6 +4,13 @@
 
 > 实现对话摘要压缩中间件，基于 token 阈值触发历史消息压缩，支持摘要生成、消息裁剪、动态提醒保护、关键上下文保留和压缩后消息重建。
 
+## 相关源码跳转
+
+- [DeerFlowSummarizationMiddleware：摘要触发、消息裁剪与重建](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L100)
+- [动态提醒保护逻辑：避免 system-reminder 被压进摘要](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L194)
+- [技能上下文 rescue：摘要压缩时保留近期技能读取结果](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L212)
+- [SummarizationConfig：摘要阈值与开关配置](../../backend/packages/harness/deerflow/config/summarization_config.py#L25)
+
 ## 面试官想听什么
 
 这个模块很适合考工程细节。面试官可能会追问：

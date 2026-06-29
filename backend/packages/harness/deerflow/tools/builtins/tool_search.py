@@ -184,11 +184,11 @@ def build_deferred_tool_setup(filtered_tools: list[BaseTool], *, enabled: bool) 
         延迟被禁用,或启用但没有 MCP 工具通过过滤。
     """
     if not enabled:
-        # Deferral disabled: defer nothing; the model binds every tool as before.
+        # 延迟加载关闭：不隐藏任何工具，保持旧的全量绑定行为。
         return DeferredToolSetup(None, frozenset(), None)
     deferred = [t for t in filtered_tools if is_mcp_tool(t)]
     if not deferred:
-        # Enabled, but no MCP tool to defer: same empty result, different reason.
+        # 延迟加载已开启但没有 MCP 工具通过过滤：返回空 setup，避免多暴露一个无用 tool_search。
         return DeferredToolSetup(None, frozenset(), None)
     catalog = DeferredToolCatalog(tuple(deferred))
     return DeferredToolSetup(build_tool_search_tool(catalog), catalog.names, catalog.hash)

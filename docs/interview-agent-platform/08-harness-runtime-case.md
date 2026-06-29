@@ -2,6 +2,14 @@
 
 这一篇参考同类案例文档的“组织方式”：先讲业务问题，再讲执行链路、模块分层、关键对象、面试讲法。内容全部回到当前项目：**智能 Agent Harness 平台**。
 
+## 相关源码跳转
+
+- [RunManager：run 创建、状态、取消与持久化](../../backend/packages/harness/deerflow/runtime/runs/manager.py#L176)
+- [run_agent worker：后台执行 Agent 并发布流式事件](../../backend/packages/harness/deerflow/runtime/runs/worker.py#L143)
+- [ThreadState：线程级状态和 reducer](../../backend/packages/harness/deerflow/agents/thread_state.py#L100)
+- [Lead Agent：中间件链、工具装配、trace 注入](../../backend/packages/harness/deerflow/agents/lead_agent/agent.py#L394)
+- [Gateway services：HTTP 请求转 run config](../../backend/app/gateway/services.py#L536)
+
 ## 一句话项目介绍
 
 > 我设计并实现了一套智能 Agent Harness 运行时平台，用统一的 Harness 层管理模型调用、线程状态、中间件链路、工具治理、长期记忆、子 Agent 调度、远程沙箱和 Guardrails 安全拦截，使复杂 Agent 能在长对话、多工具、多任务场景下稳定执行，并支持 Skill 自进化沉淀。

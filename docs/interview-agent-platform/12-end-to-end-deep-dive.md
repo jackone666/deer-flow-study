@@ -6,6 +6,16 @@
 
 所以本篇不再按单点模块展开，而是按“项目故事 + 运行链路 + 面试追问”组织。目标是让你能把 `interview-agent-platform` 从零散知识点讲成一个完整的 Agent Harness 项目。
 
+## 相关源码跳转
+
+- [Gateway start_run：用户请求进入 run 生命周期](../../backend/app/gateway/services.py#L536)
+- [RunManager：run 注册、状态机和取消](../../backend/packages/harness/deerflow/runtime/runs/manager.py#L176)
+- [run_agent worker：执行 Agent 图、流式事件和 RunJournal](../../backend/packages/harness/deerflow/runtime/runs/worker.py#L143)
+- [ThreadState：messages、artifacts、sandbox、promoted 等运行状态](../../backend/packages/harness/deerflow/agents/thread_state.py#L100)
+- [Lead Agent：中间件链总装入口](../../backend/packages/harness/deerflow/agents/lead_agent/agent.py#L394)
+- [GuardrailMiddleware：工具执行前安全门禁](../../backend/packages/harness/deerflow/guardrails/middleware.py#L20)
+- [ensure_sandbox_initialized：工具执行时懒加载沙箱](../../backend/packages/harness/deerflow/sandbox/tools.py#L1313)
+
 ## 一句话定位
 
 我做的是一套面向复杂任务的 Agent Harness 平台。它不是只把 LLM 包成聊天接口，而是把一次 Agent 任务拆成可观测、可治理、可安全执行的运行时流程：入口层负责会话和任务生命周期，状态层负责合并消息和产物，上下文层负责动态注入记忆和系统提醒，工具层负责权限、检索和延迟加载，安全层负责 Guardrails 和 Sandbox，任务结束后再通过 Memory、Skill 和 Eval 形成持续改进闭环。

@@ -2,6 +2,16 @@
 
 这份题库按模块分类。建议先背“回答骨架”，不要逐字背答案。
 
+## 核心源码索引
+
+- [动态上下文](../../backend/packages/harness/deerflow/agents/middlewares/dynamic_context_middleware.py#L61)
+- [长期记忆](../../backend/packages/harness/deerflow/agents/memory/updater.py#L457)
+- [摘要压缩](../../backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py#L100)
+- [工具治理 / tool_search](../../backend/packages/harness/deerflow/tools/builtins/tool_search.py#L139)
+- [Guardrails](../../backend/packages/harness/deerflow/guardrails/middleware.py#L20)
+- [Harness 运行时](../../backend/packages/harness/deerflow/runtime/runs/worker.py#L143)
+- [Sandbox](../../backend/packages/harness/deerflow/sandbox/tools.py#L1313)
+
 ## 一、项目总览
 
 ### Q1：你这个 Agent 平台主要解决什么问题？
