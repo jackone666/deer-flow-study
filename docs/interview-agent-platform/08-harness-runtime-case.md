@@ -499,3 +499,145 @@ Skill 自进化发生在任务完成之后，但依赖 Harness 采集信号：
 ### 4. 为什么远程沙箱放在 Harness 层？
 
 因为工具执行环境是平台能力。上层工具只应该依赖 Sandbox 抽象，不应该知道本地路径或容器细节。
+
+## 深挖补充：Run 生命周期怎么讲
+
+Harness 的核心不是“调用一次模型”，而是管理一次 run 的生命周期。
+
+```text
+created
+  -> queued
+  -> running
+  -> streaming
+  -> waiting_tool
+  -> running_tool
+  -> completed
+```
+
+异常状态包括：
+
+```text
+cancel_requested
+  -> cancelled
+
+running
+  -> failed
+  -> rollback / cleanup
+```
+
+每个状态要回答三个问题：
+
+1. 当前 run 能不能被取消？
+2. 当前 run 是否已经产生了可见输出？
+3. 当前 run 失败后哪些资源要清理？
+
+面试回答：
+
+> Harness 要管理的是长任务，不是单次函数调用。所以 run 必须有状态机，能处理排队、执行、工具等待、取消、失败、清理和恢复。
+
+## 深挖补充：ThreadState 的字段可以怎么拆
+
+ThreadState 可以按职责拆成几类：
+
+| 类别 | 字段示例 | 合并策略 |
+| --- | --- | --- |
+| 对话状态 | messages、summary | 追加、移除、替换 |
+| 工具状态 | promoted_tools、tool_catalog_hash | 去重、过期失效 |
+| 产物状态 | artifacts、images、files | 按 id 或路径 upsert |
+| 运行状态 | run_id、status、errors | 状态机迁移 |
+| 成本状态 | token_usage、tool_duration | 累加 |
+| 安全状态 | guardrail_events、sandbox_id | 追加和绑定 |
+
+高分表达：
+
+> reducer 的意义是把每类字段的合并语义写清楚。消息是追加，工具是去重，成本是累加，状态是按状态机迁移，不能用一个浅 merge 解决。
+
+## 深挖补充：中间件顺序为什么重要
+
+中间件不是随便排列。顺序错了会产生实际 bug。
+
+推荐顺序：
+
+```text
+user / thread context
+  -> dynamic context
+  -> summarization
+  -> tool filtering / deferred setup
+  -> model call
+  -> tool call guardrails
+  -> sandbox execution
+  -> result normalization
+  -> memory / skill / eval async hooks
+```
+
+典型错误：
+
+| 错误顺序 | 后果 |
+| --- | --- |
+| 先摘要再保护 reminder | 当前日期和记忆被压进旧历史 |
+| 先暴露工具再做权限过滤 | 模型可能看到不该看的 schema |
+| 工具执行后才做 Guardrails | 安全拦截失去意义 |
+| 主链路同步做 Skill 更新 | 用户响应被后台沉淀拖慢 |
+
+面试回答：
+
+> 中间件链路体现的是生命周期设计。不同能力必须挂在正确时机，否则不是代码风格问题，而是会破坏安全、上下文和延迟。
+
+## 深挖补充：子 Agent 的边界
+
+子 Agent 适合处理明确、可隔离的子任务：
+
+- 检索资料。
+- 检查代码。
+- 生成某个文件。
+- 分析某个模块。
+- 运行一组测试并汇总。
+
+不适合交给子 Agent 的任务：
+
+- 需要主 Agent 持续和用户澄清的问题。
+- 需要全局产品判断的问题。
+- 高风险权限决策。
+- 没有明确完成标准的开放任务。
+
+子 Agent 返回结果应该结构化：
+
+```text
+status: success / failed / partial
+summary: 做了什么
+evidence: 文件、命令、输出、引用
+risks: 未验证或失败点
+next_steps: 主 Agent 应该怎么继续
+```
+
+## 深挖补充：Harness 故障排查
+
+| 现象 | 优先排查 |
+| --- | --- |
+| 模型重复问同样问题 | summary 是否丢目标，memory 是否没注入 |
+| 工具突然不可用 | allowed-tools、catalog_hash、promoted_tools |
+| 子任务结果丢失 | ThreadState reducer 是否覆盖字段 |
+| 流式输出中断 | run worker、SSE、取消状态 |
+| 文件路径错乱 | sandbox workspace、thread_id、artifact mapping |
+| 成本突然升高 | 工具 schema、动态上下文、摘要触发阈值 |
+
+面试表达：
+
+> 我会按 Harness 层次排查：先看 run 状态，再看 ThreadState，再看上下文和工具装配，再看安全与沙箱，最后看模型本身。
+
+## 深挖补充：系统设计题怎么展开
+
+如果面试官让你“现场设计一个 Agent Harness”，可以按下面答：
+
+1. **入口**：thread/run API、鉴权、上传、流式响应。
+2. **运行时**：run manager、worker、取消、超时、恢复。
+3. **状态**：ThreadState、reducers、消息和产物持久化。
+4. **上下文**：动态记忆、摘要、token budget。
+5. **工具**：catalog、权限、deferred tools、结果标准化。
+6. **安全**：Guardrails、Sandbox、审计。
+7. **观测**：trace、metrics、eval case、dashboard。
+8. **闭环**：Memory、Skill、数据飞轮。
+
+收束句：
+
+> 这个设计的关键不是堆功能，而是每层都有清晰输入输出和失败策略。

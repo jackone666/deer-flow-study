@@ -498,3 +498,159 @@ Embedding：
 ### 4. 如果多个 skill 的 allowed-tools 冲突怎么办？
 
 可以取并集，让任务具备所需能力；但对高风险工具如 bash/write_file 可以再叠加 guardrails 或人工确认。
+
+## 深挖补充：工具治理的完整生命周期
+
+工具治理不是“注册工具”这么简单。一个工具从进入平台到被模型调用，至少经历下面几个阶段：
+
+```text
+tool registered
+  -> schema normalization
+  -> description quality check
+  -> group / permission tagging
+  -> catalog hashing
+  -> always-on or deferred decision
+  -> runtime filtering by agent / skill / user policy
+  -> optional tool_search retrieval
+  -> promoted into ThreadState
+  -> tool call validation
+  -> guardrails / sandbox
+  -> result normalization
+  -> metrics feedback
+```
+
+高分表达：
+
+> 工具治理的目标不是让模型能用更多工具，而是让模型在当前任务里只看到合适的工具，并且每次调用都能被权限、安全和观测系统接住。
+
+## 深挖补充：工具 schema 为什么是成本
+
+工具 schema 会占模型上下文，而且会影响模型注意力。工具越多，问题越明显：
+
+| 问题 | 表现 |
+| --- | --- |
+| token 成本高 | 用户任务内容被工具描述挤掉 |
+| 相似工具混淆 | 模型在 `search_web`、`web_search`、`browser_search` 中乱选 |
+| 参数误填 | schema 太长，模型忽略必填字段 |
+| 权限过宽 | 当前技能不该用的工具也暴露给模型 |
+| 版本漂移 | promoted 工具引用旧 schema |
+
+可以这样解释 deferred tools：
+
+> 我把工具 catalog 分成基础工具和长尾工具。基础工具直接绑定，长尾工具只暴露一个 tool_search 入口，命中后再提升具体工具。这样模型先表达“我需要什么能力”，平台再决定暴露哪个具体工具。
+
+## 深挖补充：工具描述怎么写才可检索
+
+工具描述要同时服务两件事：模型调用和检索召回。
+
+好的描述应该包含：
+
+- 这个工具解决什么任务。
+- 什么时候应该用。
+- 什么时候不应该用。
+- 关键参数是什么意思。
+- 输出是什么格式。
+- 常见别名和用户会怎么说。
+
+示例：
+
+```text
+bad: "Run command"
+
+good: "Execute a shell command inside the configured sandbox. Use for
+repository inspection, test runs, build commands, and file-system checks.
+Do not use for network exfiltration, credential access, or destructive
+host operations. Returns stdout, stderr, exit code, and timeout status."
+```
+
+面试里可以补一句：
+
+> 工具描述不是文档装饰，它会直接影响 tool_search 召回和模型参数填写质量。
+
+## 深挖补充：权限模型怎么分层
+
+工具权限至少可以分四层：
+
+| 层级 | 作用 |
+| --- | --- |
+| 全局配置 | 平台是否启用某类工具 |
+| Agent 配置 | 某个 Agent 默认能用什么 |
+| Skill allowed-tools | 某个技能执行时允许什么 |
+| Runtime policy | 当前用户、线程、环境下还能不能用 |
+
+例子：
+
+```text
+write_file 全局启用
+  -> code agent 默认允许
+  -> research skill 不允许
+  -> 当前 run 是只读模式，再次禁止
+  -> 即使允许，也要经过 Guardrails
+```
+
+高分回答：
+
+> allowed-tools 不是唯一权限系统，它只是技能级白名单。真正的工具治理还要叠加全局配置、Agent 能力、用户权限、运行时策略和安全拦截。
+
+## 深挖补充：tool_search 召回错了怎么定位
+
+工具检索失败通常有四类原因：
+
+| 类型 | 表现 | 修复 |
+| --- | --- | --- |
+| query 不好 | 用户意图没有转成工具词 | 让模型改写 query 或加同义词 |
+| 描述不好 | 正确工具文档没有相关词 | 重写 description |
+| ranking 不好 | 正确工具在 Top-K 后面 | 调整权重或加 rerank |
+| 权限过滤 | 正确工具被提前过滤 | 检查 allowed-tools 和 group |
+
+观测字段：
+
+- `tool_search_query`
+- `tool_search_top_k`
+- `tool_search_results`
+- `selected_tool`
+- `tool_call_success`
+- `tool_not_found_reason`
+- `catalog_hash`
+
+面试回答：
+
+> 我不会只看最终有没有调到工具，而是看 query、召回列表、最终选择、调用结果和 catalog_hash。这样能区分是检索问题、权限问题、描述问题还是工具本身失败。
+
+## 深挖补充：工具结果也要治理
+
+工具治理不只发生在调用前，也发生在调用后。
+
+工具结果可能有这些问题：
+
+- 输出太长，撑爆上下文。
+- 输出包含敏感信息。
+- 输出格式不稳定，模型难以继续用。
+- 错误信息不标准，模型无法决定是否重试。
+- 工具返回外部不可信内容，可能包含 prompt injection。
+
+所以工具结果应该做：
+
+1. 截断和摘要。
+2. 敏感信息脱敏。
+3. 标准化错误结构。
+4. 记录 stdout / stderr / exit code / duration。
+5. 对外部网页、文件内容标记 untrusted source。
+
+## 深挖补充：面试攻防
+
+### Q：为什么不让模型自己判断能不能用工具？
+
+模型可以判断“想用什么能力”，但不能作为权限边界。权限必须由平台执行，否则 prompt injection 可以诱导模型越权调用。
+
+### Q：工具越多，是否 Agent 越强？
+
+不是。工具越多，选择空间越大，误调用和 token 成本也越高。强 Agent 不是工具最多，而是工具暴露最合适。
+
+### Q：怎么避免工具版本变化导致旧状态坏掉？
+
+用 catalog_hash 或 tool version 绑定 promoted 状态。工具目录变化后，旧 promoted tools 要失效或重新校验，避免模型调用不存在或 schema 已变的工具。
+
+### Q：为什么 TF-IDF 可以先用？
+
+工具检索里工具名、参数名、领域关键词很重要，TF-IDF 轻量、便宜、可解释，适合作为第一版。后续可以叠加 embedding 和 rerank 提升语义召回。

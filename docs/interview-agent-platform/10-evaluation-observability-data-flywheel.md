@@ -1740,3 +1740,102 @@ new failures by suite
 ### 10. 数据飞轮怎么防止越变越差？
 
 靠门禁和回归：原始日志不直接进 Memory 或 Skill；用户明确纠偏优先，模型推断低置信；P0 fail 样本不能进训练；所有 prompt、Skill、tool schema 更新必须跑 offline eval；线上继续监控同类错误是否下降。
+
+## 深挖补充：现场设计一个 Agent Eval 系统
+
+如果面试官让你“从 0 到 1 设计一个 Agent 评估系统”，可以按下面结构回答。
+
+```text
+Eval Case
+  -> Dataset
+  -> Runner
+  -> Trace Collector
+  -> Grader
+  -> Report
+  -> Regression Gate
+  -> Online Feedback
+```
+
+每个模块的职责：
+
+| 模块 | 输入 | 输出 |
+| --- | --- | --- |
+| Eval Case | 用户任务、期望行为、禁区 | 单条可运行测试 |
+| Dataset | 多个 case、标签、版本 | 固定评测集 |
+| Runner | agent config、dataset | run results、transcripts |
+| Trace Collector | 模型、工具、sandbox、memory 事件 | span tree |
+| Grader | rule / code / LLM judge | P0/P1/P2 分数 |
+| Report | eval result | 回归、成本、延迟、安全摘要 |
+| Regression Gate | baseline + current | pass / fail |
+| Online Feedback | 用户纠偏、失败 trace | 新 case 候选 |
+
+高分表达：
+
+> 我会先把评估对象拆开：case 是单个任务，dataset 是任务集合，runner 负责复现，trace 负责解释过程，grader 负责打分，report 负责比较版本，regression gate 决定能不能发布。
+
+## 深挖补充：P0/P1/P2 可以怎么落到 Agent 平台
+
+| 等级 | Agent 平台例子 | 发布策略 |
+| --- | --- | --- |
+| P0 | 危险工具放行、跨用户读记忆、sandbox 逃逸、摘要吞掉安全提醒 | 任一失败禁止发布 |
+| P1 | tool_search 召回错、Memory correction 未生效、子 Agent 结果丢失 | 明显回归禁止发布 |
+| P2 | 回答不够完整、表达不够清晰、token 成本偏高 | 用加权分和趋势判断 |
+
+面试里要强调：
+
+> P0 是底线，不参与平均。一个安全 case 失败，不能被十个质量 case 的高分抵消。
+
+## 深挖补充：一次线上事故怎么进入数据飞轮
+
+可以用这个例子讲清楚闭环：
+
+```text
+线上用户反馈：Agent 忘记“默认用中文”
+  -> trace 显示 Memory 有该偏好
+  -> dynamic context span 显示未注入
+  -> 原因：memory scope 用了错误 agent_id
+  -> 修复：调整 scope 查询
+  -> 新增 eval case：跨 agent / thread 读取基础偏好
+  -> 回归：Memory correction suite 通过
+  -> dashboard：同类用户纠偏率下降
+```
+
+这个例子说明数据飞轮不是“收集更多数据”，而是：
+
+1. 线上信号定位问题。
+2. 问题变成可复现 eval case。
+3. 修复后跑回归。
+4. 线上指标验证同类问题下降。
+
+## 深挖补充：评估系统也要版本化
+
+需要版本化的对象：
+
+- eval dataset version。
+- grader version。
+- prompt / model version。
+- tool catalog hash。
+- guardrail policy version。
+- memory schema version。
+- sandbox image version。
+
+否则一个分数变化无法解释到底是模型变了、工具变了、评测集变了，还是 grader 变了。
+
+推荐回答：
+
+> 没有版本化的 eval 分数没有解释力。Agent 平台变量很多，必须把模型、prompt、工具、安全策略、sandbox 和 dataset 都纳入版本记录。
+
+## 深挖补充：常见评估误区
+
+| 误区 | 问题 |
+| --- | --- |
+| 只看最终答案 | 看不到工具选择和安全路径 |
+| 只看平均分 | P0 安全失败可能被掩盖 |
+| 只用 LLM judge | 成本高且不稳定 |
+| eval case 不版本化 | 分数变化无法归因 |
+| 线上日志直接训练 | 容易固化隐私和错误 |
+| 只测 happy path | 无法发现边界和攻击场景 |
+
+收束句：
+
+> Agent eval 的重点不是打一个漂亮分数，而是让每次优化可比较、每次失败可复现、每次发布有门禁。
