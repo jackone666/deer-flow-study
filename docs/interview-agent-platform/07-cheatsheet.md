@@ -4,6 +4,28 @@
 
 我做的是一套智能 Agent 平台，核心解决长上下文、多工具、多 Agent 和安全执行问题：模型调用前做动态上下文注入，对话后异步更新长期记忆，历史超阈值后摘要压缩，大规模工具通过分组、权限和延迟加载治理，工具执行前由 Guardrails 做确定性安全拦截。
 
+## 端到端主线
+
+```text
+用户请求
+  -> Gateway 创建 / 加载 thread
+  -> Runtime 创建 run
+  -> ThreadState 读取历史、附件、产物
+  -> Context 注入记忆、日期、系统提醒
+  -> Summarization 判断是否压缩
+  -> Tooling 装配 allowed / deferred tools
+  -> Model 决策回答、调工具或派子任务
+  -> Guardrails 判断 allow / deny
+  -> Sandbox 执行文件、命令、代码
+  -> Tool result 写回 ThreadState
+  -> Memory / Skill / Eval 异步沉淀
+  -> Trace / Metrics 支撑观测和数据飞轮
+```
+
+30 秒收束：
+
+> 模型负责推理，Harness 负责运行时、上下文、工具、安全、状态和评估闭环。
+
 ## 五个模块一句话
 
 动态上下文：

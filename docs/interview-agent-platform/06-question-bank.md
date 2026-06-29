@@ -728,3 +728,79 @@
 推荐回答：
 
 > 最像的是把 Agent 当生产系统而不是 demo 来做：有运行时状态、有中间件、有工具权限和 deferred tools、有 Guardrails 和 Sandbox，有长期记忆和 Skill 沉淀，也有评估、trace、数据飞轮去证明效果。
+
+## 十三、端到端项目深挖
+
+### Q68：一次用户请求进来后，系统完整发生了什么？
+
+回答要点：
+
+- Gateway 创建或加载 thread，Runtime 创建 run。
+- 模型调用前做上下文、摘要、工具装配。
+- 工具调用前做 Guardrails，执行时进入 Sandbox。
+- 运行结果写回 ThreadState。
+- Memory、Skill、Eval、Metrics 走异步闭环。
+
+推荐回答：
+
+> 用户请求进入 Gateway 后，系统会创建或加载 thread，然后 Runtime 创建 run，绑定 user_id、thread_id 和 agent_id。进入 Agent Harness 后，先读取历史消息、附件和线程元数据；模型调用前，Context middleware 注入长期记忆、日期和系统提醒，Summarization middleware 判断是否需要压缩旧消息，Tooling middleware 根据权限、分组和 deferred catalog 装配工具。模型随后决定回答、调工具或派子 Agent。工具调用前会经过 Guardrails，允许后才进入 Sandbox 执行，结果再写回 ThreadState 并流式返回。任务结束后，Memory、Skill、Eval 和指标聚合走异步链路，形成长期改进闭环。
+
+### Q69：为什么你把它叫 Agent Harness，而不是 Agent 应用？
+
+回答要点：
+
+- Harness 管任务生命周期和工程边界。
+- Chatbot 只管 messages 到 response。
+- Agent Harness 要管理状态、工具、安全和观测。
+
+推荐回答：
+
+> 普通 Agent 应用更像 messages 到 response 的封装，而 Harness 管的是一次复杂任务的完整生命周期。它要决定模型看到什么上下文、能用什么工具、工具结果怎么写回状态、危险动作怎么拦截、失败怎么恢复、运行过程怎么追踪，以及任务结束后哪些经验可以沉淀。所以 Harness 是运行时和治理层，不只是模型调用层。
+
+### Q70：你这个系统里最核心的状态是什么？
+
+回答要点：
+
+- 不能只说聊天记录。
+- 要提 ThreadState、消息、产物、工具提升状态、token usage、error。
+- 要说明 reducer。
+
+推荐回答：
+
+> 最核心的是 ThreadState。它不只是 messages，还包括工具结果、生成产物、图片、promoted tools、token usage、错误和运行元信息。因为 Agent 运行中会有工具调用、子任务返回和中间件更新，不能简单用 dict 覆盖，所以需要 reducer 定义每个字段的合并语义，比如 messages 追加或按 id 合并，promoted tools 去重，token usage 累加，错误保留来源。
+
+### Q71：哪些逻辑必须同步，哪些可以异步？
+
+回答要点：
+
+- 同步：影响当次正确性和安全。
+- 异步：学习、沉淀、统计。
+- 能讲 trade-off。
+
+推荐回答：
+
+> 鉴权、用户隔离、动态上下文注入、工具权限过滤、Guardrails 和 Sandbox 执行必须同步，因为它们影响当次模型决策和安全边界。长期记忆更新、Skill 沉淀、Eval 回放、指标聚合和日志清洗可以异步，因为它们服务后续优化，不应该拖慢主回答路径。这个取舍的核心是：主路径保证正确性和安全，后台路径负责学习和分析。
+
+### Q72：如果一次 Agent 运行失败，你怎么定位？
+
+回答要点：
+
+- 按层排查。
+- 不要直接甩锅模型。
+- 提 trace、metrics、error_type。
+
+推荐回答：
+
+> 我会按 trace 分层定位。先看 run 是否正常完成，再看模型 span 是否超时或 token 爆了；然后看上下文层有没有触发摘要、是否注入了错误记忆；再看 tool_search 是否召回了错误工具、工具参数是否异常；接着看 Guardrails 是否误杀，Sandbox 是否启动慢、资源不足或命令失败。这样能把“Agent 不行”拆成上下文、工具、安全、沙箱、模型和用户输入几类具体问题。
+
+### Q73：如果面试官说“这听起来很复杂，有必要吗”怎么答？
+
+回答要点：
+
+- 承认复杂度。
+- 说明复杂度来自问题本身。
+- 给出渐进式落地方案。
+
+推荐回答：
+
+> 如果只是单轮问答，确实没必要这么复杂。但这个项目面向的是长对话、多工具、多文件和可执行任务。只要 Agent 能调工具、写文件、执行命令，就必须有工具治理、安全边界和观测。落地时也不是一次全做，我会先做最小 Harness：thread/run/state、基础工具权限、Guardrails fail-closed 和 trace；然后再逐步加摘要、长期记忆、deferred tools、sandbox 复用和数据飞轮。

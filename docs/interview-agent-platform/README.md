@@ -16,6 +16,26 @@
 4. **安全边界意识**：是否知道 Agent 调工具和执行命令前必须有 guardrails 和 sandbox。
 5. **系统设计表达能力**：是否能把模块边界、数据流、失败策略讲清楚。
 
+## 怎么用这套资料
+
+这套资料不是按“背诵顺序”写的，而是按“面试追问深度”写的：
+
+1. 先用本页建立项目定位，保证 30 秒、2 分钟、10 分钟都能讲。
+2. 再读 `12-end-to-end-deep-dive.md`，把所有模块串成一次完整 Agent run。
+3. 然后按模块读 `01` 到 `05`，补足上下文、记忆、摘要、工具、安全五个基础能力。
+4. 再读 `08` 到 `11`，把当前项目的 Harness、评估、自进化、沙箱讲得更像真实工程。
+5. 最后用 `06-question-bank.md` 和 `07-cheatsheet.md` 做临场复盘。
+
+面试时不要把每篇文档都平均讲。推荐主线是：
+
+```text
+项目定位
+  -> 一次 run 的完整链路
+  -> 选 2-3 个最强模块深挖
+  -> 用评估和观测证明有效
+  -> 用 trade-off 收束
+```
+
 ## 推荐讲法
 
 ### 30 秒版本
@@ -42,6 +62,7 @@
 
 ## 文档目录
 
+- `12-end-to-end-deep-dive.md`：端到端深挖，把运行时、状态、上下文、工具、安全、学习闭环串成一个完整项目讲法。
 - `01-dynamic-context.md`：动态上下文注入机制。
 - `02-memory-system.md`：长期记忆管理系统。
 - `03-summarization-middleware.md`：对话摘要压缩中间件。
@@ -60,6 +81,7 @@
 
 ```text
 08 Harness 总览
+  -> 12 端到端深挖
   -> 01 动态上下文
   -> 03 摘要压缩
   -> 02 长期记忆
@@ -86,3 +108,48 @@
 - 每个模块都准备一个 trade-off。
 - 不要说“用了某某框架所以实现了”，要说“我为什么这样分层，这样做解决什么问题”。
 - 遇到追问时按顺序回答：输入是什么、处理流程是什么、输出是什么、失败怎么处理。
+
+## 推荐深挖组合
+
+不同面试官关注点不一样，可以提前准备三套组合。
+
+### 后端 / 平台岗
+
+重点讲：
+
+- `08-harness-runtime-case.md`
+- `12-end-to-end-deep-dive.md`
+- `04-tool-governance.md`
+- `11-sandbox-system.md`
+- `10-evaluation-observability-data-flywheel.md`
+
+主线：
+
+> 我做的不是一个聊天应用，而是一个 Agent Harness。重点在 run 生命周期、状态合并、工具装配、安全执行和可观测性。
+
+### AI 应用 / Agent 岗
+
+重点讲：
+
+- `01-dynamic-context.md`
+- `02-memory-system.md`
+- `03-summarization-middleware.md`
+- `04-tool-governance.md`
+- `09-self-evolution-evaluation.md`
+
+主线：
+
+> 我把 Agent 的不确定性拆成上下文预算、长期记忆、工具选择和经验沉淀几个问题分别治理。
+
+### 安全 / 稳定性追问
+
+重点讲：
+
+- `05-guardrails.md`
+- `11-sandbox-system.md`
+- `10-evaluation-observability-data-flywheel.md`
+- `12-end-to-end-deep-dive.md`
+
+主线：
+
+> Prompt 是软约束，真正的安全来自工具执行前的策略判断、执行时的沙箱隔离，以及执行后的审计和回归评估。
