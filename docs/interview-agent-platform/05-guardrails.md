@@ -755,3 +755,100 @@ Guardrails 一定会面对两个问题：
 ### Q：Guardrails 能不能替代 Sandbox？
 
 不能。Guardrails 判断应不应该执行，Sandbox 限制执行环境。即使 Guardrails 允许，Sandbox 也要限制路径、资源和网络。
+
+## 面试补强：Guardrails 要讲 fail-closed、误杀漏放和策略版本
+
+这题不要只答“工具执行前做安全检查”。更完整的说法是：
+
+> Guardrails 是工具执行前的强制策略层，它不依赖模型自觉。模型可以提出 tool call，但真正执行前必须把 tool name、args、user/thread context 和风险等级交给策略层判断。低风险只读操作可以轻量放行，高风险副作用操作要 fail-closed、可审计、可回放，拒绝后还要给模型结构化原因，避免它误以为工具崩了。
+
+### 回答骨架
+
+```text
+位置：
+  model output -> tool call -> GuardrailMiddleware -> SandboxAudit -> real tool
+
+输入：
+  tool_name、tool_args、thread_id、user_id、runtime context、risk level
+
+输出：
+  allow / deny + reason code + retryable + suggestion
+
+异常：
+  高风险 fail-closed，低风险只读按配置降级，不能默认放行副作用工具。
+
+观测：
+  记录 policy_version、deny_reason、tool_args 摘要、provider latency、最终处理结果。
+```
+
+### 高频追问：provider 挂了怎么办
+
+回答时不要一刀切说“全部拒绝”或“全部放行”。可以按风险分层：
+
+| 风险 | provider 异常策略 | 原因 |
+| --- | --- | --- |
+| Low | 可配置降级放行 | 只读、无副作用，优先可用性 |
+| Medium | 降级但加强审计 | 例如 workspace 内写入，需要留痕 |
+| High | fail-closed | bash、删除、网络请求等有真实副作用 |
+| Critical | fail-closed 或人工确认 | 凭证、越权路径、生产资源 |
+
+面试回答：
+
+> 这里我不会默认 allow。策略服务不可用本身就是风险信号，尤其对 bash、write、network、delete 这类工具必须 fail-closed。只读工具可以配置化降级，但要打 provider_error 和 degraded_allow 日志。
+
+### 高频追问：Guardrails 会不会影响 Agent 效率
+
+可以这样答：
+
+> 会增加一次决策开销，所以不能所有工具都走同样重的策略。工程上我会做风险分层：只读工具走本地 allowlist，副作用工具走规则和审计，高危工具走外部 policy 或人工确认。这样把延迟花在风险真正高的地方。
+
+关键点是把“安全”和“性能”放在同一套策略里，而不是二选一。
+
+### 高频追问：误杀和漏放怎么闭环
+
+Guardrails 最忌讳说成静态规则。生产系统要能修规则：
+
+| 问题 | 需要记录 | 闭环动作 |
+| --- | --- | --- |
+| 误杀 | `deny_reason`、`policy_version`、`tool_name`、参数摘要、用户意图 | 人工复核，细化规则或加入条件白名单 |
+| 漏放 | 完整 trace、执行结果、影响范围、对应策略版本 | 补 attack eval，升级策略，回放历史 trace |
+| 高频拒绝 | 拒绝分布、重试次数、模型后续动作 | 优化工具描述或给替代建议 |
+| provider 慢 | latency、timeout、risk level | 本地缓存低风险策略，高风险保持阻断 |
+
+核心指标：
+
+| 指标 | 说明 |
+| --- | --- |
+| `guardrail_deny_rate` | 拒绝比例 |
+| `guardrail_provider_error_rate` | 策略服务异常比例 |
+| `guardrail_latency_ms` | 决策延迟 |
+| `false_positive_rate` | 正常动作误杀率 |
+| `false_negative_incident_count` | 危险动作漏放事故数 |
+| `deny_reason_distribution` | 拒绝原因分布 |
+| `policy_version` | 策略版本 |
+| `fail_closed_count` | fail-closed 次数 |
+
+### 高频追问：拒绝后模型应该怎么办
+
+不要只返回一段自然语言。更好的工具错误消息要结构化：
+
+```json
+{
+  "error": "guardrail_denied",
+  "reason_code": "credential_access_denied",
+  "message": "The requested command attempts to read credential files.",
+  "retryable": false,
+  "suggestion": "Use project-local configuration files or ask the user to provide an approved credential path.",
+  "policy_version": "guardrails-2026-06-30"
+}
+```
+
+面试回答：
+
+> 拒绝消息要让模型知道这是策略拒绝，不是工具故障。`retryable=false` 可以避免模型原地重试，`suggestion` 可以引导它换安全路径，`policy_version` 方便后续复盘误杀。
+
+### 高频追问：你负责到什么程度
+
+可以这样收束：
+
+> 我负责的是 GuardrailRequest / Decision 数据结构、工具调用前的 middleware 拦截、fail-closed 行为、标准化 ToolMessage、deny reason 日志和基础评估集。具体策略 provider 可以是本地规则或外部服务，但调用边界、异常策略和观测字段必须由 Agent 运行时统一保证。

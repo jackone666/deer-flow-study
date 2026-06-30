@@ -243,6 +243,71 @@ pass^3 = 0.8^3 = 0.512
 
 > Agent 不能只跑一次评测，因为模型输出有随机性。我会区分 pass@k 和 pass^k：前者看能力上限，后者看生产稳定性。面向用户的 Agent 更关注 pass^k，因为用户希望每次都稳定。
 
+## 面试补强：别只说“看指标”，要说怎么定位坏在哪
+
+高级面试官会追问：线上用户说效果不好，你怎么判断是模型、上下文、工具、记忆、沙箱还是评估标准的问题？
+
+### 标准排查链路
+
+推荐按 run trace 分层排查：
+
+```text
+1. run 生命周期
+   -> 是否创建成功、是否取消、是否超时、是否异常退出
+
+2. model span
+   -> input/output token、latency、finish_reason、重试次数
+
+3. context span
+   -> 动态上下文是否注入、注入了哪些 memory、是否触发摘要
+
+4. tool span
+   -> tool_search query、Top-K、promoted、最终调用工具、错误类型
+
+5. safety span
+   -> Guardrails allow/deny、policy version、deny reason
+
+6. sandbox span
+   -> acquire/create/execute 耗时、exit_code、timeout、audit decision
+
+7. learning span
+   -> memory enqueue/update、skill candidate、eval case created
+```
+
+面试话术：
+
+> 我不会直接说“模型不行”。我会用 `run_id/thread_id` 把一次运行拆成 model、context、tool、guardrail、sandbox、memory 这些 span。先定位哪一层异常，再看那一层的输入输出。如果 tool_search Top-K 就没召回正确工具，这是工具治理问题；如果 memory 注入了过期事实，这是记忆污染问题；如果模型拿到正确上下文仍回答错，才更可能是模型或 prompt 问题。
+
+### 面试官追问：Prompt Cache / TTFT 怎么评价？
+
+回答时不要只说“有优化”。要同时讲收益和副作用：
+
+> Prompt Cache 的目标是降低重复上下文带来的首 token 延迟和成本，但它和动态工具加载有冲突：上下文越稳定，cache 越容易命中；工具和记忆越动态，cache 越容易失效。所以我会把稳定 system prompt、固定工具说明、动态记忆、长尾工具 schema 分层。稳定层尽量 cache，动态层按需注入。指标上看 cache hit rate、TTFT、input token、tool schema token saved 和任务成功率，不能为了 cache 命中牺牲工具选择正确性。
+
+可补充指标：
+
+| 指标 | 说明 |
+| --- | --- |
+| `prompt_cache_hit_rate` | Prompt Cache 命中率 |
+| `ttft_ms` | 首 token 延迟 |
+| `input_tokens_per_run` | 单次输入 token |
+| `tool_schema_tokens` | 工具 schema 消耗 |
+| `task_success_rate` | 不能只看成本，必须看任务成功 |
+
+### 面试官追问：怎么设计黄金集？
+
+> 黄金集要覆盖能力边界，而不是只放 happy path。我会按模块分层建设：动态上下文 case 检查记忆注入和冲突处理；工具治理 case 检查 deferred tool 是否先 search；Guardrails case 检查高风险动作 fail-closed；沙箱 case 检查路径越界和超时；Skill case 检查触发、执行和输出格式。每个 case 要有输入、期望行为、P0/P1/P2 rubric 和可复现 trace。
+
+### 面试官追问：一次优化怎么证明真的变好？
+
+推荐回答：
+
+> 我会先定义 baseline，然后在同一套 evalset 上做前后对比。P0 安全问题必须为 0，P1 关键过程不能回归，再看 P2 体验分、token、latency 和工具调用次数。上线时只改一个变量，小流量灰度，看真实用户纠偏率、重试率、任务完成率和错误类型分布。如果离线变好但线上变差，就把线上失败 trace 回流成新 eval case。
+
+### Ownership 口径
+
+> 我负责把 Agent 运行过程结构化成可评估、可观测的事件，包括上下文、工具、安全、沙箱、记忆和 Skill 的关键字段。评估平台可以是统一能力，但我必须保证我的模块能被 trace、能被归因、能被回归验证。
+
 ## 当前项目可对应的评估点
 
 当前项目已有或可直接挂钩的能力：
