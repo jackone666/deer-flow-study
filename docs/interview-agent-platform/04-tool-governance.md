@@ -236,6 +236,81 @@ tool.call.failed
   -> 看 catalog_hash 是否变化
 ```
 
+## 面试补强：工具治理不要答成“工具太多就搜索”
+
+这类题最容易被面试官追问。回答时先给结论，再给架构，再给指标，最后讲 trade-off。
+
+### 标准回答骨架
+
+> 工具治理本质上是在控制模型的行动空间。我的设计不是把所有工具 schema 一次性塞进上下文，而是做两级路由：常用和高频工具常驻，长尾 MCP / Tool / Skill 进入 deferred catalog，需要时通过 `tool_search` 检索后 promoted。这样可以同时解决 schema token 成本、工具误选和权限边界三个问题。
+
+可以按四层展开：
+
+```text
+第一层：Registry
+  统一注册内置工具、MCP 工具、Skill 工具和子 Agent 工具
+
+第二层：Policy
+  用 group / allowed-tools / denylist 控制当前 Agent 或 Skill 能看到什么
+
+第三层：Retrieval + Promotion
+  长尾工具进入 deferred catalog，通过 tool_search Top-K 召回后写入 promoted state
+
+第四层：Runtime Guard
+  未 promoted 的 deferred tool 调用直接拦截，高风险调用再经过 Guardrails / Sandbox
+```
+
+### 面试官追问：几千个工具怎么保证找得到？
+
+不要只说“用 embedding 搜”。要把召回、重排、评估、兜底说完整：
+
+> 我会把工具描述、别名、典型场景、参数、风险等级都作为检索文档。第一版可以用 TF-IDF / BM25 做低成本召回，后续升级为 embedding + rerank。离线用人工标注 query-tool 数据集评估 Precision@5、Recall@5、MRR；线上记录 `tool_search.query`、Top-K、最终调用工具、工具错误率和用户纠偏。召回不到时不让模型猜工具，而是返回候选不足，让模型澄清或降级到通用方案。
+
+### 面试官追问：如果一个任务需要两个工具，一个常驻、一个长尾，怎么找到第二个？
+
+> 常驻工具只能解决一部分能力。模型拿到常驻工具后，如果发现缺少能力，就应该调用 `tool_search` 去 deferred catalog 里找长尾工具。这里要靠工具描述和 prompt 约束告诉模型：如果现有工具不能完整完成任务，先搜索工具，不要硬凑。运行时也会拦截未提升的 deferred tool，避免模型绕过检索直接调用。
+
+### 面试官追问：工具选错了怎么闭环？
+
+回答要点：
+
+```text
+先减少选错概率：
+  group / allowed-tools 缩小候选空间
+  工具描述规范化
+  tool_search Top-K 评估
+  catalog_hash 防止旧 promoted 漂移
+
+再处理选错结果：
+  工具错误标准化
+  trace 记录 query、Top-K、最终工具、错误类型
+  高风险工具交给 Guardrails / Sandbox
+  高频错误反哺工具描述、别名和评测集
+```
+
+推荐话术：
+
+> 我不会把工具选错简单归因给模型。平台侧要先缩小行动空间，再通过检索和 promoted 控制 schema 进入上下文，最后用 trace 和离线评测把错误样本沉淀回来。工具治理的闭环不是“模型更聪明”，而是 registry、policy、retrieval、runtime guard 和 eval 一起收敛。
+
+### 需要主动补充的指标
+
+面试中至少说出下面 3-5 个指标，否则容易显得只有方案没有验证：
+
+| 指标 | 说明 |
+| --- | --- |
+| `tool_schema_token_saved` | deferred tools 节省的 schema token |
+| `Precision@5 / Recall@5` | tool_search 召回质量 |
+| `tool_selection_accuracy` | 模型最终选对工具的比例 |
+| `unpromoted_call_block_rate` | 未提升工具被拦截比例 |
+| `tool_error_rate` | 工具调用失败率 |
+| `tool_search_latency_ms` | 检索额外耗时 |
+
+### Ownership 口径
+
+如果面试官追问“这块你负责什么”，建议这样说：
+
+> 我主要负责的是工具治理链路的设计和落地，包括工具分组、延迟加载、tool_search、promoted state 和调用时拦截。Guardrails / Sandbox 是更底层的执行安全能力，我和对应模块做了接口对齐，保证工具被选中以后仍然不会绕过安全边界。
+
 ## 工具分组
 
 工具分组解决“场景权限”和“上下文聚焦”。

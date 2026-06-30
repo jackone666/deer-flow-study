@@ -240,6 +240,73 @@ eval case -> active flag
 
 > 我把自进化拆成 Memory、Skill 和 Harness 策略三层。Memory 解决用户个性化，Skill 解决工作流复用，Harness 评测解决平台能力是否真的变好。
 
+## 面试补强：Skill 自进化要讲清楚边界和门禁
+
+你不能把自进化讲成“模型觉得不好就自己改 Skill”。面试官真正关心的是：信号从哪里来、怎么判断可复用、怎么避免污染、怎么发布、怎么回滚。
+
+### 标准回答骨架
+
+> Skill 自进化不是线上 Agent 无约束修改自己，而是一个受控的经验沉淀流程。一次任务结束后，评估链路会读取结构化 trace，包括用户问题、使用了哪个 Skill、工具调用参数、执行结果、错误类型和用户反馈。如果出现重复失败、明确负反馈，或者某个高价值流程多次成功，系统会生成 Skill patch 或新 Skill 候选。候选必须经过 schema 校验、安全扫描、离线回归和人工审核，才会进入灰度和全量发布。
+
+可以按这条链路讲：
+
+```text
+run trace / user feedback
+  -> 识别 Skill 使用情况和失败类型
+  -> 生成 memory / skill / eval case 候选
+  -> schema 校验 + 安全扫描 + 隐私过滤
+  -> 离线黄金集回归
+  -> 小流量灰度
+  -> 观察成功率、用户满意度、回滚指标
+  -> 全量发布或回滚
+```
+
+### 面试官追问：你怎么知道是哪个 Skill 出了问题？
+
+> 每次 Skill 调用都要在日志里带结构化字段，而不是只靠自然语言日志。至少包括 `skill_name`、`skill_version`、`trigger_reason`、`input_summary`、`tool_calls`、`result_status`、`error_type` 和 `user_feedback`。这样评估 Agent 才能把负反馈归因到具体 Skill、具体版本和具体失败模式。
+
+建议字段：
+
+```json
+{
+  "skill_name": "local-interview-transcription",
+  "skill_version": "v3",
+  "trigger_reason": "local audio transcription request",
+  "tool_calls": ["ffmpeg", "mlx_whisper"],
+  "result_status": "partial_success",
+  "error_type": "hallucination_loop",
+  "user_feedback": "negative"
+}
+```
+
+### 面试官追问：Skill 是本地每个用户一份，还是全局共享？
+
+推荐回答：
+
+> 我会分两层：用户级 Skill / Memory 只在用户作用域内生效，适合个性化偏好和私有流程；全局 Skill 必须经过聚类、去重、人工审核、离线回归和灰度发布。单个用户的负反馈不能直接改全局 Skill，否则会把个人场景过拟合到所有用户。
+
+### 面试官追问：怎么防止 Skill 膨胀？
+
+> Skill 候选不能一有流程就创建。需要看复用次数、成功率、是否跨用户共性、是否已有相似 Skill。相似 Skill 先做聚类和合并，低复用、低成功率、过期能力要淘汰。否则 Skill 越多，检索和意图识别都会变差。
+
+指标可以这样说：
+
+| 指标 | 用途 |
+| --- | --- |
+| `skill_reuse_count` | 是否真的被复用 |
+| `skill_success_rate` | 复用后是否成功 |
+| `skill_trigger_precision` | 意图识别是否误触发 |
+| `duplicate_skill_rate` | 是否出现能力膨胀 |
+| `regression_rate_after_skill_update` | 更新后是否影响其他 Skill |
+
+### 面试官追问：发布机制怎么做？
+
+> 我会把 Skill 发布分成离线和在线两段。离线阶段跑黄金数据集：触发准确率、执行正确率、输出格式、对其他 Skill 的回归影响都要过。在线阶段先灰度小流量，只改一个变量，观察用户满意度、任务完成率、重试率和负反馈。如果指标变差，按版本回滚。
+
+### Ownership 口径
+
+> 我负责 Skill 自进化这条链路里的 Skill 表达、调用日志字段、候选生成和门禁设计；评估 Agent 和全局发布审核可以是平台能力，但我需要保证 Skill 本身可追踪、可验证、可回滚。
+
 ## 触发条件
 
 不是每次对话都应该自进化。
